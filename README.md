@@ -30,9 +30,23 @@ python3 -m http.server 8080   # oder: npm start
 # danach http://localhost:8080 im Browser öffnen
 ```
 
-**Im Netz veröffentlichen:** Der Workflow `.github/workflows/pages.yml` stellt die Seite bei jedem Push auf
-`main` auf GitHub Pages. Dafür einmalig im Repository unter *Settings → Pages* als Quelle
-*„GitHub Actions“* auswählen. Die Karte liegt danach unter `https://<benutzername>.github.io/alpenkarte/`.
+## Im Netz veröffentlichen (Vercel)
+
+Die Seite ist statisch, es gibt also nichts zu bauen. `vercel.json` stellt das schon richtig ein:
+kein Build-Schritt, kein `npm install` (sonst würde Vercel die Playwright-Browser aus den Testabhängigkeiten
+herunterladen), ausgeliefert wird das Repository-Verzeichnis selbst.
+
+1. Auf [vercel.com](https://vercel.com) → *Add New… → Project* → dieses Repository importieren.
+2. Alle Vorgaben so lassen (Framework *Other*, Root Directory `./`) → *Deploy*.
+3. Fertig – Vercel baut bei jedem Push auf den Produktions-Branch neu.
+
+Wichtig: Vercel nimmt als Produktions-Branch den **Standard-Branch des Repositories**. Der sollte auf GitHub
+unter *Settings → General → Default branch* auf `main` stehen (oder in Vercel unter
+*Settings → Git → Production Branch* umgestellt werden).
+
+**Alternative GitHub Pages:** Der Workflow `.github/workflows/pages.yml` liegt weiterhin bei. Er läuft nur von
+Hand (*Actions → Deploy auf GitHub Pages → Run workflow*) und braucht einmalig *Settings → Pages → Source:
+„GitHub Actions“*.
 
 ## Wo liegen meine Daten?
 
@@ -61,6 +75,7 @@ gegangen markiert, weil die gespeicherte Strecke gegen die *aktuelle* Knotenlist
 
 ```
 index.html          Grundgerüst und Seitenleiste
+vercel.json         Hosting-Einstellungen (kein Build, Cache-Regeln)
 css/style.css       Gestaltung
 js/config.js        Einstellungen: Server, Zoomstufen, Kachelgrößen, Kartenhintergründe
 js/overpass.js      lädt Wege und Gipfel kachelweise nach (Warteschlange, Ausweichserver)

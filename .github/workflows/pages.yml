@@ -1,10 +1,10 @@
-# Veröffentlicht die Karte auf GitHub Pages.
+# Alternative zum Hosting auf Vercel: veröffentlicht die Karte auf GitHub Pages.
+# Läuft absichtlich nur von Hand (Actions -> Deploy auf GitHub Pages -> Run workflow),
+# damit ohne eingerichtete Pages keine roten Haken an den Commits kleben.
 # Einmalig nötig: Repository -> Settings -> Pages -> Source: "GitHub Actions".
 name: Deploy auf GitHub Pages
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
