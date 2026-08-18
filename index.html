@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alpenkarte – meine Wege &amp; Gipfel</title>
+<meta name="description" content="Interaktive Alpenkarte: Wegabschnitte anklicken und als gegangen markieren, bestiegene Gipfel abhaken.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M2 27 12 8l6 10 3-5 9 14z' fill='%23374151'/%3E%3Cpath d='M9.2 13.4 12 8l4 6.7-2.2 1.6-2-1.4z' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="map" aria-label="Karte"></div>
+
+<header id="topbar">
+  <div class="brand"><span class="logo">▲</span><span>Alpenkarte</span></div>
+  <div class="chips">
+    <div class="chip"><b id="stat-km">0,0</b><span>km</span></div>
+    <div class="chip"><b id="stat-seg">0</b><span>Abschnitte</span></div>
+    <div class="chip"><b id="stat-peaks">0</b><span>Gipfel</span></div>
+  </div>
+  <button id="panel-toggle" class="icon-btn" title="Seitenleiste ein-/ausblenden" aria-label="Seitenleiste ein-/ausblenden">☰</button>
+</header>
+
+<aside id="panel" aria-label="Seitenleiste">
+
+  <section class="card">
+    <h2>Ort suchen</h2>
+    <form id="search-form" autocomplete="off">
+      <div class="row">
+        <input id="search-input" type="search" placeholder="z. B. Watzmann, Zermatt, Karwendel" aria-label="Ort suchen">
+        <button class="btn" type="submit">Los</button>
+      </div>
+    </form>
+    <ul id="search-results" class="list"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Klick-Modus</h2>
+    <div class="segmented" id="mode-switch" role="group">
+      <button class="seg active" data-mode="segment">Wegabschnitt</button>
+      <button class="seg" data-mode="way">Ganzer Weg</button>
+    </div>
+    <p class="hint">Auf einen Weg klicken markiert ihn als gegangen – nochmal klicken nimmt die Markierung zurück.
+    „Wegabschnitt“ markiert von Kreuzung zu Kreuzung, „Ganzer Weg“ den kompletten OSM-Weg.</p>
+    <div class="row">
+      <button class="btn ghost" id="undo-btn" disabled>↶ Rückgängig</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Karte</h2>
+    <label class="field">Hintergrund
+      <select id="basemap-select"></select>
+    </label>
+    <label class="check"><input type="checkbox" id="routes-overlay"> Markierte Wanderrouten (Waymarked Trails)</label>
+    <label class="check"><input type="checkbox" id="show-unvisited" checked> Nicht gegangene Wege anzeigen</label>
+    <label class="check"><input type="checkbox" id="auto-load" checked> Wege automatisch nachladen</label>
+  </section>
+
+  <section class="card">
+    <h2>Meine Gipfel <span class="badge" id="peak-count">0</span></h2>
+    <ul id="peak-list" class="list"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Meine Wege <span class="badge" id="way-count">0</span></h2>
+    <ul id="way-list" class="list"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Daten</h2>
+    <p class="hint">Alles wird lokal im Browser gespeichert. Sicherungskopie nicht vergessen!</p>
+    <div class="row wrap">
+      <button class="btn" id="export-btn">Export (.json)</button>
+      <button class="btn" id="import-btn">Import</button>
+      <button class="btn danger" id="reset-btn">Alles löschen</button>
+    </div>
+    <input type="file" id="import-file" accept="application/json,.json" hidden>
+  </section>
+
+  <section class="card">
+    <h2>Hilfe</h2>
+    <ul class="hint bullets">
+      <li>Ab Zoomstufe 13 werden die Wege aus OpenStreetMap geladen – dort stehen deutlich mehr Alpenwege drin als bei Google Maps.</li>
+      <li>Gipfel erscheinen ab Zoomstufe 11, Klick hakt sie ab.</li>
+      <li>Mit der rechten Maustaste auf einen Weg markierst du den ganzen OSM-Weg auf einmal.</li>
+      <li>Tastatur: <kbd>Strg</kbd>+<kbd>Z</kbd> macht die letzte Markierung rückgängig.</li>
+    </ul>
+    <p class="hint">Kartendaten: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>-Mitwirkende.</p>
+  </section>
+
+</aside>
+
+<div id="status" class="status" hidden></div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="vendor/leaflet/leaflet.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

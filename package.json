@@ -1,0 +1,15 @@
+{
+  "name": "alpenkarte",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Interaktive Alpenkarte: gegangene Wegabschnitte und bestiegene Gipfel festhalten.",
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "test": "node --test tests/logic.test.mjs",
+    "test:e2e": "node tests/e2e.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.1"
+  }
+}

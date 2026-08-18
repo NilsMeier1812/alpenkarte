@@ -1,0 +1,106 @@
+# Alpenkarte
+
+Eine Website, auf der du festhältst, **welche Bergwege du schon gegangen bist und welche Gipfel du bestiegen hast**.
+
+Die Wege kommen direkt aus OpenStreetMap. Dort sind in den Alpen deutlich mehr Steige, Steigspuren und
+Forstwege erfasst als bei Google Maps – inklusive Angaben zur SAC-Schwierigkeit. Ein Klick auf einen Weg
+markiert genau den Abschnitt **von einer Kreuzung bis zur nächsten**.
+
+## Bedienung
+
+| Aktion | Wirkung |
+| --- | --- |
+| Klick auf einen Weg | Wegabschnitt zwischen zwei Kreuzungen wird als gegangen markiert (orange) |
+| Nochmal klicken | Markierung wieder weg |
+| Rechtsklick auf einen Weg | markiert den kompletten OSM-Weg auf einmal |
+| Klick-Modus „Ganzer Weg“ | dasselbe per Linksklick – praktisch am Handy |
+| Klick auf ein Gipfeldreieck | Gipfel abhaken (wird orange mit Haken) |
+| <kbd>Strg</kbd>+<kbd>Z</kbd> | letzte Markierung rückgängig |
+
+Wege erscheinen ab **Zoomstufe 13**, Gipfel ab Zoomstufe 11 (bei kleinem Zoom nur die hohen, sonst wird es zu voll).
+Oben laufen Kilometer, Anzahl der Abschnitte und Gipfel mit.
+
+## Starten
+
+Es gibt keinen Build-Schritt – die Seite ist reines HTML, CSS und JavaScript. Weil ES-Module verwendet werden,
+muss sie über einen Webserver laufen (Doppelklick auf `index.html` reicht nicht):
+
+```bash
+python3 -m http.server 8080   # oder: npm start
+# danach http://localhost:8080 im Browser öffnen
+```
+
+**Im Netz veröffentlichen:** Der Workflow `.github/workflows/pages.yml` stellt die Seite bei jedem Push auf
+`main` auf GitHub Pages. Dafür einmalig im Repository unter *Settings → Pages* als Quelle
+*„GitHub Actions“* auswählen. Die Karte liegt danach unter `https://<benutzername>.github.io/alpenkarte/`.
+
+## Wo liegen meine Daten?
+
+Alles bleibt **lokal im Browser** (`localStorage`), es gibt keinen Server und kein Benutzerkonto.
+Das heißt auch: andere Geräte sehen die Markierungen nicht, und wer die Browserdaten löscht, löscht sie mit.
+
+Deshalb gibt es unter *Daten* einen **Export** als `.json` und einen **Import** (wahlweise dazumischen oder
+ersetzen). Damit kommst du auch aufs Handy oder machst eine Sicherungskopie.
+
+## Wie das Markieren funktioniert
+
+Der interessante Teil ist, dass OSM-Wege nicht bei jeder Kreuzung enden – ein einzelner Weg kann über mehrere
+Abzweigungen laufen. Die Karte baut deshalb selbst ein Wegenetz auf:
+
+1. **Kreuzungen finden:** Ein Knoten, der von mindestens zwei geladenen Wegen benutzt wird (oder zweimal vom
+   selben Weg, z. B. bei einer Schleife), ist eine Kreuzung. Weganfang und -ende zählen immer dazu.
+2. **Zerlegen:** Jeder Weg wird an diesen Stellen in Abschnitte geschnitten – das sind die anklickbaren Stücke.
+3. **Speichern:** Gespeichert wird *nicht* „Abschnitt Nr. 3“, sondern die Strecke als Knotenpaar
+   `[Startknoten, Endknoten]`. Aufgelöst wird das erst beim Zeichnen.
+
+Punkt 3 ist wichtig: Wird beim Weiterscrollen ein Nachbarweg nachgeladen, entsteht mitten in einem bereits
+markierten Abschnitt eine neue Kreuzung. Der Abschnitt zerfällt dann in zwei – und beide bleiben korrekt als
+gegangen markiert, weil die gespeicherte Strecke gegen die *aktuelle* Knotenliste aufgelöst wird.
+
+## Aufbau
+
+```
+index.html          Grundgerüst und Seitenleiste
+css/style.css       Gestaltung
+js/config.js        Einstellungen: Server, Zoomstufen, Kachelgrößen, Kartenhintergründe
+js/overpass.js      lädt Wege und Gipfel kachelweise nach (Warteschlange, Ausweichserver)
+js/tilecache.js     Zwischenspeicher (IndexedDB, 14 Tage) – schont die Overpass-Server
+js/graph.js         Wegenetz: Kreuzungserkennung und Zerlegung in Abschnitte
+js/runs.js          Intervall-Rechnung für die gegangenen Teilstücke
+js/marks.js         markieren / entmarkieren
+js/store.js         Speicherung, Statistik, Rückgängig, Import/Export
+js/map-view.js      Leaflet-Karte, Zeichnen der Wege und Gipfel
+js/ui.js            Seitenleiste, Suche, Listen
+vendor/leaflet/     Leaflet 1.9.4 (lokal, kein CDN nötig)
+```
+
+## Tests
+
+```bash
+npm test        # Logik: Kreuzungserkennung, Intervalle, Längen (Node)
+npm run start   # in einem zweiten Terminal, dann:
+npm run test:e2e   # Klicks im echten Browser, mit erfundenen Overpass-Antworten
+```
+
+Der Browsertest prüft die ganze Kette: Zerlegen an Kreuzungen, Markieren, Verschmelzen benachbarter Abschnitte,
+Entmarkieren, Rückgängig, Gipfel abhaken, Neuladen und Export.
+
+## Grenzen und Stolpersteine
+
+- **Overpass ist ein freier Dienst.** Bei sehr schnellem Herumscrollen kann eine Abfrage abgelehnt werden; die
+  Karte versucht es dann bei einem anderen Server erneut. Der Zwischenspeicher hilft beim zweiten Besuch.
+- **Kreuzungen entstehen nur aus geladenen Wegen.** Am Rand des geladenen Bereichs kann ein Abschnitt daher
+  länger sein als er sein müsste. Sobald der Nachbarbereich nachgeladen ist, stimmt die Zerlegung – die
+  Markierungen bleiben dabei erhalten (siehe oben).
+- **Wird ein Weg in OpenStreetMap neu aufgeteilt**, ändert sich seine ID und die Markierung dieses Weges geht
+  verloren. Das passiert selten, ist aber nicht zu verhindern.
+- Nur Wege mit `highway=path|footway|track|bridleway|steps|via_ferrata` werden geladen, private Wege nicht.
+  Anpassen lässt sich das in `js/config.js`.
+
+## Datenquellen
+
+Kartendaten © [OpenStreetMap](https://www.openstreetmap.org/copyright)-Mitwirkende (ODbL) ·
+Kartenbilder: [OpenTopoMap](https://opentopomap.org) (CC-BY-SA), CyclOSM, Esri ·
+Routen-Overlay: [Waymarked Trails](https://hiking.waymarkedtrails.org) ·
+Ortssuche: [Nominatim](https://nominatim.openstreetmap.org) ·
+Karte: [Leaflet](https://leafletjs.com) (BSD-2-Clause)
