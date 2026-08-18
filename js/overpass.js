@@ -40,10 +40,11 @@ function query(kind, x, y) {
   if (kind === 'peaks') {
     return `[out:json][timeout:60];\n(\n  node["natural"="peak"](${box});\n  node["natural"="volcano"](${box});\n);\nout body;`;
   }
+  // Bewusst ohne Filter auf "access": In den Alpen sind viele Forst- und
+  // Almwege als privat getaggt – gegangen ist man sie trotzdem.
   return (
     `[out:json][timeout:90];\n` +
-    `way["highway"~"^(${TRAIL_HIGHWAYS})$"]["footway"!~"^(sidewalk|crossing)$"]` +
-    `["access"!~"^(private|no)$"](${box});\n` +
+    `way["highway"~"^(${TRAIL_HIGHWAYS})$"]["footway"!~"^(sidewalk|crossing)$"](${box});\n` +
     `out body geom;`
   );
 }

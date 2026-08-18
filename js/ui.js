@@ -118,10 +118,18 @@ export class Ui {
   status({ zoom, pending, needZoom, autoLoad }) {
     const el = $('#status');
     let text = '';
-    if (pending > 0) text = `Lade Wege und Gipfel … (${pending})`;
-    else if (!autoLoad) text = 'Nachladen ist pausiert';
-    else if (needZoom) text = `Noch ${TRAIL_ZOOM_MIN - zoom} Zoomstufe(n) näher, dann erscheinen die Wege`;
+    let warn = false;
+    if (needZoom) {
+      const steps = TRAIL_ZOOM_MIN - zoom;
+      text = `Noch ${steps}× hineinzoomen, dann kannst du Wege markieren`;
+      warn = true;
+    } else if (pending > 0) {
+      text = `Lade Wege und Gipfel … (${pending})`;
+    } else if (!autoLoad) {
+      text = 'Nachladen ist pausiert';
+    }
     el.textContent = text;
+    el.classList.toggle('warn', warn);
     el.hidden = !text;
   }
 

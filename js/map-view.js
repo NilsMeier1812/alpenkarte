@@ -53,6 +53,15 @@ export class MapView {
     this.showUnvisited = true;
     this.autoLoad = true;
     this.mode = 'segment';
+    // Finger treffen deutlich ungenauer als ein Mauszeiger.
+    this.coarsePointer =
+      window.matchMedia?.('(pointer: coarse)').matches ||
+      window.matchMedia?.('(hover: none)').matches ||
+      navigator.maxTouchPoints > 0 ||
+      false;
+    // Reines Touchgerät (Handy, Tablet) – dort gibt es keinen Mauszeiger.
+    this.touchOnly = window.matchMedia?.('(hover: none)').matches || false;
+    this.tapRadius = this.coarsePointer ? 32 : 14;
 
     this.#initMap();
     this.loader = new OverpassLoader(
@@ -71,8 +80,15 @@ export class MapView {
       zoomControl: true,
       preferCanvas: true,
       worldCopyJump: true,
+      // Am Handy würde der Doppeltipp zum Zoomen beim schnellen Markieren
+      // mehrerer Abschnitte dazwischenfunken. Zoomen geht dort über die
+      // Zwei-Finger-Geste und die +/−-Knöpfe.
+      doubleClickZoom: !this.touchOnly,
     });
-    this.renderer = L.canvas({ padding: 0.35, tolerance: 8 });
+    // Am Touchgerät übernimmt die Suche nach dem nächstgelegenen Weg
+    // (#onMapClick) die Treffererkennung – die ist genauer als ein großer
+    // Toleranzradius, der einfach den zuletzt gezeichneten Weg nimmt.
+    this.renderer = L.canvas({ padding: 0.35, tolerance: this.coarsePointer ? 2 : 8 });
 
     this.baseLayers = new Map();
     for (const base of BASEMAPS) {
@@ -95,6 +111,8 @@ export class MapView {
     this.map.on('zoomend', () => {
       this.#applyZoomVisibility();
     });
+    // Klicks, die keinen Weg direkt getroffen haben, landen hier.
+    this.map.on('click', (ev) => this.#onMapClick(ev));
     this.#applyZoomVisibility();
   }
 
@@ -236,7 +254,7 @@ export class MapView {
     const dashed = tags.highway === 'steps' || tags.highway === 'via_ferrata';
     return {
       color: COLORS.unvisited,
-      weight: 2.5,
+      weight: this.coarsePointer ? 3.5 : 2.5,
       opacity: 0.6,
       dashArray: dashed ? '4 4' : null,
       lineCap: 'round',
@@ -310,6 +328,61 @@ export class MapView {
       if (this.wayLayers.has(wayId)) continue;
       const bounds = this.boundsOf(wayId);
       if (bounds && draw.intersects(bounds)) this.renderWay(wayId);
+    }
+  }
+
+  /**
+   * Sucht den Wegabschnitt, der einem Punkt am nächsten liegt – höchstens
+   * maxPixels entfernt. Damit lässt sich auch mit dem Finger zuverlässig
+   * markieren, ohne die dünne Linie exakt zu treffen.
+   */
+  nearestSegment(latlng, maxPixels) {
+    const map = this.map;
+    const target = map.latLngToLayerPoint(latlng);
+    const center = map.latLngToContainerPoint(latlng);
+    const searchBounds = L.latLngBounds(
+      map.containerPointToLatLng([center.x - maxPixels, center.y + maxPixels]),
+      map.containerPointToLatLng([center.x + maxPixels, center.y - maxPixels]),
+    );
+
+    let best = null;
+    for (const wayId of this.wayLayers.keys()) {
+      const wayBounds = this.boundsOf(wayId);
+      if (!wayBounds || !wayBounds.intersects(searchBounds)) continue;
+      const way = this.graph.ways.get(wayId);
+      if (!way) continue;
+
+      for (const segment of this.graph.segments(wayId)) {
+        if (!segment.bounds) segment.bounds = L.latLngBounds(segment.latlngs);
+        if (!segment.bounds.intersects(searchBounds)) continue;
+        if (!this.showUnvisited && !isSegmentVisited(this.store, way, segment)) continue;
+
+        for (let i = 0; i < segment.latlngs.length - 1; i++) {
+          const p1 = map.latLngToLayerPoint(segment.latlngs[i]);
+          const p2 = map.latLngToLayerPoint(segment.latlngs[i + 1]);
+          const distance = L.LineUtil.pointToSegmentDistance(target, p1, p2);
+          if (!best || distance < best.distance) best = { distance, way, segment };
+        }
+      }
+    }
+    return best && best.distance <= maxPixels ? best : null;
+  }
+
+  #onMapClick(ev) {
+    if (this.map.getZoom() < TRAIL_ZOOM_MIN) {
+      this.onToggle({
+        text: `Zum Markieren näher heranzoomen – die Wege erscheinen ab Zoomstufe ${TRAIL_ZOOM_MIN}.`,
+        hint: true,
+      });
+      return;
+    }
+    const hit = this.nearestSegment(ev.latlng, this.tapRadius);
+    if (hit) {
+      this.toggle(hit.way, hit.segment, this.mode);
+      return;
+    }
+    if (!this.wayLayers.size) {
+      this.onToggle({ text: 'Hier sind noch keine Wege geladen – einen Moment warten.', hint: true });
     }
   }
 

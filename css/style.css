@@ -260,6 +260,7 @@ kbd {
 }
 
 .status { top: 70px; }
+.status.warn { background: rgba(180, 83, 9, 0.95); font-weight: 600; }
 .toast { bottom: 28px; background: rgba(232, 89, 12, 0.95); }
 
 /* Zoom-Knöpfe unter die Kopfleiste schieben */
@@ -270,6 +271,16 @@ kbd {
 /* — Gipfelmarker ——————————————————————————————————— */
 
 .peak-marker { background: none; border: 0; }
+
+/* Größere Trefferfläche für Finger als das kleine Dreieck selbst */
+.peak-marker::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  right: -10px;
+  top: -10px;
+  bottom: -12px;
+}
 
 .peak-marker .tri {
   display: block;
@@ -311,4 +322,7 @@ body.zoom-far .peak-marker .lbl { display: none; }
   body:not(.panel-open) #panel { transform: translateY(20px); }
   .chips { flex: 1; justify-content: space-around; }
   .status { top: 62px; }
+  /* Maßstab würde sich mit der Quellenangabe überlagern */
+  .leaflet-control-scale { display: none; }
+  .leaflet-control-attribution { background: rgba(255, 255, 255, 0.85); }
 }

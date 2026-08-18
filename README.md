@@ -10,7 +10,7 @@ markiert genau den Abschnitt **von einer Kreuzung bis zur nächsten**.
 
 | Aktion | Wirkung |
 | --- | --- |
-| Klick auf einen Weg | Wegabschnitt zwischen zwei Kreuzungen wird als gegangen markiert (orange) |
+| Klick/Tipp auf einen Weg | Wegabschnitt zwischen zwei Kreuzungen wird als gegangen markiert (orange) |
 | Nochmal klicken | Markierung wieder weg |
 | Rechtsklick auf einen Weg | markiert den kompletten OSM-Weg auf einmal |
 | Klick-Modus „Ganzer Weg“ | dasselbe per Linksklick – praktisch am Handy |
@@ -19,6 +19,15 @@ markiert genau den Abschnitt **von einer Kreuzung bis zur nächsten**.
 
 Wege erscheinen ab **Zoomstufe 13**, Gipfel ab Zoomstufe 11 (bei kleinem Zoom nur die hohen, sonst wird es zu voll).
 Oben laufen Kilometer, Anzahl der Abschnitte und Gipfel mit.
+
+### Am Handy
+
+Eine Wanderweg-Linie ist nur wenige Pixel breit – mit dem Finger ist das nicht zu treffen. Deshalb muss man
+sie gar nicht genau treffen: Die Karte sucht den Weg, der dem Tipp **am nächsten** liegt (bis zu 32 px, am
+Rechner 14 px). Liegen zwei Wege in Reichweite, gewinnt der nähere.
+
+Auf reinen Touchgeräten ist der **Doppeltipp-Zoom abgeschaltet**, sonst würde er beim schnellen Markieren
+mehrerer Abschnitte hintereinander dazwischenfunken. Gezoomt wird mit zwei Fingern oder über die +/−-Knöpfe.
 
 ## Starten
 
@@ -92,13 +101,15 @@ vendor/leaflet/     Leaflet 1.9.4 (lokal, kein CDN nötig)
 ## Tests
 
 ```bash
-npm test        # Logik: Kreuzungserkennung, Intervalle, Längen (Node)
-npm run start   # in einem zweiten Terminal, dann:
-npm run test:e2e   # Klicks im echten Browser, mit erfundenen Overpass-Antworten
+npm test             # Logik: Kreuzungserkennung, Intervalle, Längen (Node)
+npm run start        # in einem zweiten Terminal, dann:
+npm run test:e2e     # Klicks im echten Browser, mit erfundenen Overpass-Antworten
+npm run test:touch   # dasselbe als Handy mit Fingertipps
 ```
 
 Der Browsertest prüft die ganze Kette: Zerlegen an Kreuzungen, Markieren, Verschmelzen benachbarter Abschnitte,
-Entmarkieren, Rückgängig, Gipfel abhaken, Neuladen und Export.
+Entmarkieren, Rückgängig, Gipfel abhaken, Neuladen und Export. Der Touch-Test misst zusätzlich, wie weit man
+danebentippen darf, dass der nähere von zwei Wegen gewinnt und dass bei zu kleinem Zoom ein Hinweis erscheint.
 
 ## Grenzen und Stolpersteine
 
@@ -109,8 +120,8 @@ Entmarkieren, Rückgängig, Gipfel abhaken, Neuladen und Export.
   Markierungen bleiben dabei erhalten (siehe oben).
 - **Wird ein Weg in OpenStreetMap neu aufgeteilt**, ändert sich seine ID und die Markierung dieses Weges geht
   verloren. Das passiert selten, ist aber nicht zu verhindern.
-- Nur Wege mit `highway=path|footway|track|bridleway|steps|via_ferrata` werden geladen, private Wege nicht.
-  Anpassen lässt sich das in `js/config.js`.
+- Geladen werden Wege mit `highway=path|footway|track|bridleway|steps|via_ferrata` – auch als privat getaggte,
+  weil in den Alpen viele Forst- und Almwege so erfasst sind. Anpassen lässt sich das in `js/config.js`.
 
 ## Datenquellen
 
