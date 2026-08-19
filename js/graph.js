@@ -88,19 +88,6 @@ export class TrailGraph {
   }
 }
 
-/** Wandelt ein Overpass-Element in einen Weg um (oder null, wenn unbrauchbar). */
-export function wayFromOverpass(el) {
-  if (el.type !== 'way' || !el.nodes || !el.geometry) return null;
-  if (el.nodes.length !== el.geometry.length || el.nodes.length < 2) return null;
-  if (el.geometry.some((p) => !p)) return null; // unvollständige Geometrie
-  return {
-    id: el.id,
-    nodes: el.nodes,
-    latlngs: el.geometry.map((p) => [p.lat, p.lon]),
-    tags: el.tags || {},
-  };
-}
-
 /** Anzeigename eines Weges aus den OSM-Tags. */
 export function wayLabel(tags = {}) {
   return (

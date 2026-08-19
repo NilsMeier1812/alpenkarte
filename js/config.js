@@ -3,32 +3,18 @@
 export const STORAGE_KEY = 'alpenkarte.v1';
 export const VIEW_KEY = 'alpenkarte.view';
 
-// Overpass-Server. Wird der erste langsam oder überlastet, wird automatisch
-// der nächste probiert.
-export const OVERPASS_ENDPOINTS = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.private.coffee/api/interpreter',
-];
+// Die Kachelrechnung steht in js/tiles.js, die Overpass-Abfrage und das
+// kompakte Übertragungsformat in js/osmdata.js. Beides teilen sich der Browser
+// und die Serverfunktion api/tiles.js.
 
 // Ab diesen Zoomstufen werden Daten geladen.
 export const TRAIL_ZOOM_MIN = 13;
 export const PEAK_ZOOM_MIN = 11;
 
-// Kachelgröße der Abfragen in Grad (Wege deutlich kleiner als Gipfel).
-// Klein genug, dass eine Abfrage auch auf einem gut ausgelasteten
-// Overpass-Server im Zeitbudget bleibt – zu große Kacheln liefern sonst nur
-// Teildaten. Bei Bedarf halbiert der Lader zusätzlich (siehe overpass.js).
-export const TRAIL_TILE = 0.04;
-export const PEAK_TILE = 0.25;
-
 // So viele Kacheln werden pro Ansicht höchstens angefordert – die der
 // Bildschirmmitte am nächsten liegenden zuerst, damit dort sofort etwas
 // erscheint. Der Rest kommt beim Weiterschieben.
 export const MAX_TILES_PER_VIEW = 48;
-
-// Welche OSM-Wege gelten als begehbar.
-export const TRAIL_HIGHWAYS = 'path|footway|track|bridleway|steps|via_ferrata';
 
 export const COLORS = {
   visited: '#e8590c',

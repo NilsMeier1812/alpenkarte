@@ -31,11 +31,11 @@ mehrerer Abschnitte hintereinander dazwischenfunken. Gezoomt wird mit zwei Finge
 
 ## Starten
 
-Es gibt keinen Build-Schritt – die Seite ist reines HTML, CSS und JavaScript. Weil ES-Module verwendet werden,
-muss sie über einen Webserver laufen (Doppelklick auf `index.html` reicht nicht):
+Es gibt keinen Build-Schritt. Der Entwicklungsserver liefert die Seite aus und bedient dieselbe Kachel-API,
+die später bei Vercel läuft:
 
 ```bash
-python3 -m http.server 8080   # oder: npm start
+npm start
 # danach http://localhost:8080 im Browser öffnen
 ```
 
@@ -48,6 +48,10 @@ herunterladen), ausgeliefert wird das Repository-Verzeichnis selbst.
 1. Auf [vercel.com](https://vercel.com) → *Add New… → Project* → dieses Repository importieren.
 2. Alle Vorgaben so lassen (Framework *Other*, Root Directory `./`) → *Deploy*.
 3. Fertig – Vercel baut bei jedem Push auf den Produktions-Branch neu.
+
+Den Ordner `api/` erkennt Vercel von selbst und stellt ihn als Funktion bereit; Abhängigkeiten braucht sie
+keine. Ohne diesen Serverteil läuft die Karte auch, fragt dann aber direkt bei Overpass an (siehe
+*Woher die Wege kommen*).
 
 Wichtig: Vercel nimmt als Produktions-Branch den **Standard-Branch des Repositories**. Der sollte auf GitHub
 unter *Settings → General → Default branch* auf `main` stehen (oder in Vercel unter
@@ -80,15 +84,64 @@ Punkt 3 ist wichtig: Wird beim Weiterscrollen ein Nachbarweg nachgeladen, entste
 markierten Abschnitt eine neue Kreuzung. Der Abschnitt zerfällt dann in zwei – und beide bleiben korrekt als
 gegangen markiert, weil die gespeicherte Strecke gegen die *aktuelle* Knotenliste aufgelöst wird.
 
+## Woher die Wege kommen
+
+Das ist der Punkt, an dem die erste Fassung dieser Karte gescheitert ist, deshalb ausführlicher:
+
+**Der naheliegende Weg funktioniert nicht.** Overpass ist ein Analysedienst für gelegentliche Abfragen, keine
+Karten-API – die Betreiber bitten ausdrücklich darum, ihn nicht für interaktives Kartenblättern zu benutzen.
+Fragt der Browser bei jedem Verschieben selbst dort an, dann
+
+- wartet jede einzelne Abfrage auf einen freien Slot (zwei pro IP), was in der Praxis die Ladezeit dominiert –
+  eine Kachel kann eine Minute brauchen, obwohl die Rechenzeit Sekunden beträgt;
+- greift irgendwann die Ratenbegrenzung, im Browser sichtbar als nichtssagendes `Failed to fetch`;
+- zahlt jedes Gerät und jeder Besuch den vollen Preis erneut, weil nichts geteilt zwischengespeichert wird.
+
+Kleinere Kacheln machen das **schlimmer**, nicht besser: mehr Abfragen heißt mehr Wartezeit in der Schlange.
+
+**Deshalb liegt zwischen Browser und Overpass eine eigene API** (`api/tiles.js`, bei Vercel eine Funktion):
+
+```
+Browser ──► /api/tiles?kind=trails&z=13&x=…&y=… ──► Vercel-CDN ──► Overpass
+             (eigene Domain, kein CORS)              (Zwischenspeicher)   (einmal pro Kachel)
+```
+
+Was das bringt:
+
+- **Overpass wird höchstens einmal pro Kachel gefragt**, danach antwortet das CDN in Millisekunden – für alle
+  Geräte und alle Besuche. Zwei Wochen frisch, danach noch 30 Tage „stale-while-revalidate“.
+- **Kein fremdes Ratenlimit und kein CORS**, weil der Browser nur mit der eigenen Domain spricht.
+- **Kleinere Übertragung:** Der Server wirft unnötige Tags weg und schreibt Koordinaten und Knoten-IDs als
+  Differenzen in Festkomma. Das spart über die Hälfte – spürbar auf dem Handy.
+- **Störungen werden an einer Stelle behandelt:** drei Overpass-Server nacheinander, Abbrüche erkannt, und ein
+  Fehler landet nie im Zwischenspeicher (`no-store`), eine Teilantwort nur für zwei Minuten.
+
+Das Kachelraster ist das übliche `z/x/y` (Wege bei z13 ≈ 3,3 × 3,3 km, Gipfel bei z10). Ganz ohne Serverteil
+läuft die Karte trotzdem: Fehlt `/api/tiles` (etwa auf GitHub Pages), merkt der Lader das an der 404 und fragt
+direkt bei Overpass an – mit allen oben genannten Nachteilen, aber es funktioniert.
+
+## Wenn in einer Gegend Wege fehlen
+
+- Offene Bereiche stehen **oben in der Statusleiste** und mit Grund und Position in der Seitenleiste unter
+  *Nicht geladene Bereiche*; ein Klick auf den Eintrag springt dorthin. Eine stille Lücke soll es nicht geben.
+- Die Karte versucht es selbst erneut, mit wachsender Wartezeit (3 s bis 60 s).
+- Meldet Overpass einen Abbruch, werden die **Teildaten trotzdem angezeigt**; die Kachel bleibt offen und wird
+  nicht abgelegt.
+- *Karte → Diesen Ausschnitt neu laden* holt den sichtbaren Bereich am Zwischenspeicher vorbei frisch.
+
 ## Aufbau
 
 ```
 index.html          Grundgerüst und Seitenleiste
 vercel.json         Hosting-Einstellungen (kein Build, Cache-Regeln)
+api/tiles.js        Kachel-API: fragt Overpass, kürzt die Antwort, lässt das CDN sie behalten
+scripts/dev-server.mjs  lokaler Server: statische Dateien + dieselbe Kachel-API
 css/style.css       Gestaltung
-js/config.js        Einstellungen: Server, Zoomstufen, Kachelgrößen, Kartenhintergründe
-js/overpass.js      lädt Wege und Gipfel kachelweise nach (Warteschlange, Ausweichserver)
-js/tilecache.js     Zwischenspeicher (IndexedDB, 14 Tage) – schont die Overpass-Server
+js/config.js        Einstellungen: Zoomstufen, Kartenhintergründe, Farben
+js/tiles.js         Kachelrechnung im z/x/y-Raster
+js/osmdata.js       Overpass-Abfrage und kompaktes Format – von Browser und Server geteilt
+js/loader.js        holt Kacheln von der eigenen API (mit Rückfall auf Overpass)
+js/tilecache.js     Zwischenspeicher im Browser (IndexedDB, 14 Tage)
 js/graph.js         Wegenetz: Kreuzungserkennung und Zerlegung in Abschnitte
 js/runs.js          Intervall-Rechnung für die gegangenen Teilstücke
 js/marks.js         markieren / entmarkieren
@@ -101,11 +154,12 @@ vendor/leaflet/     Leaflet 1.9.4 (lokal, kein CDN nötig)
 ## Tests
 
 ```bash
-npm test              # Logik: Kreuzungserkennung, Intervalle, Längen (Node)
-npm run start         # in einem zweiten Terminal, dann:
-npm run test:e2e      # Klicks im echten Browser, mit erfundenen Overpass-Antworten
+npm test              # Logik und Kachel-API (Node): Kreuzungen, Intervalle,
+                      # Kachelrechnung, Kompaktformat, Ausweichserver, Cache-Vorgaben
+npm start             # in einem zweiten Terminal, dann:
+npm run test:e2e      # Klicks im echten Browser
 npm run test:touch    # dasselbe als Handy mit Fingertipps
-npm run test:loading  # Nachladen: doppelte Abfragen, Wiederholung nach Störungen
+npm run test:loading  # Nachladen: doppelte Anfragen, Störungen, Teildaten, Rückfallebene
 npm run test:all      # alles nacheinander
 ```
 
@@ -113,30 +167,10 @@ Der Browsertest prüft die ganze Kette: Zerlegen an Kreuzungen, Markieren, Versc
 Entmarkieren, Rückgängig, Gipfel abhaken, Neuladen und Export. Der Touch-Test misst zusätzlich, wie weit man
 danebentippen darf, dass der nähere von zwei Wegen gewinnt und dass bei zu kleinem Zoom ein Hinweis erscheint.
 
-## Wenn in einer Gegend Wege fehlen
-
-Die Wege werden blockweise geladen (0,04°, rund 4,5 × 3 km). Die Blockgröße ist der wunde Punkt: Ist ein Block
-zu groß, schafft Overpass die Abfrage nicht im Zeitbudget – und liefert dann **HTTP 200 mit einem `remark` und
-nur den bis dahin gefundenen Wegen**. Genau so entsteht das Bild „hier sind kaum Wege drin“.
-
-Dagegen laufen mehrere Vorkehrungen:
-
-- **Teildaten werden angezeigt**, nicht weggeworfen. Der Block gilt aber nicht als geladen.
-- Ein abgebrochener Block wird **selbsttätig geviertelt** und in kleineren Stücken neu geholt, bis zu drei Mal
-  (bis rund 550 m Kantenlänge).
-- Abgelehnte Abfragen (429/504, Netzfehler) werden mit wachsender Wartezeit (2 s bis 60 s) erneut versucht,
-  jeweils über einen anderen Overpass-Server.
-- Nichts davon landet im Zwischenspeicher – sonst bliebe die Gegend 14 Tage leer.
-- Bleibt etwas offen, steht das **oben in der Statusleiste** und mit Grund, Server und Position in der
-  Seitenleiste unter *Nicht geladene Bereiche*. Ein Klick auf den Eintrag springt dorthin.
-- *Karte → Diesen Ausschnitt neu laden* holt den sichtbaren Bereich am Zwischenspeicher vorbei frisch vom Server.
-
-Kacheln werden **von der Bildschirmmitte nach außen** angefordert, damit dort zuerst etwas erscheint.
-
 ## Grenzen und Stolpersteine
 
-- **Overpass ist ein freier Dienst.** Bei sehr schnellem Herumscrollen kann eine Abfrage abgelehnt werden; die
-  Karte wartet dann und versucht es bei einem anderen Server erneut.
+- **Die erste Fahrt durch eine neue Gegend ist die langsame.** Dort muss der Server noch bei Overpass fragen;
+  danach liegt die Kachel im CDN und ist sofort da – auch für jedes andere Gerät.
 - **Kreuzungen entstehen nur aus geladenen Wegen.** Am Rand des geladenen Bereichs kann ein Abschnitt daher
   länger sein als er sein müsste. Sobald der Nachbarbereich nachgeladen ist, stimmt die Zerlegung – die
   Markierungen bleiben dabei erhalten (siehe oben).

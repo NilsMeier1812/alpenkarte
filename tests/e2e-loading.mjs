@@ -1,7 +1,8 @@
-// Prüft das Nachladen von Overpass: keine doppelten Abfragen, Wiederholung
-// nach Störungen, und dass Serverfehler nicht als "geladen" verbucht werden.
+// Prüft das Nachladen über die eigene Kachel-API: keine doppelten Anfragen,
+// Verhalten bei Störungen, Teildaten und die Rückfallebene ohne Server.
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
+import { packTile } from '../js/osmdata.js';
 
 const BASE = process.env.BASE_URL || 'http://localhost:8080';
 const LAT = 47.4213;
@@ -13,8 +14,12 @@ const wayFor = (id, lat) => ({
   geometry: [[lat, LON - 0.004], [lat, LON], [lat, LON + 0.004]].map(([la, lo]) => ({ lat: la, lon: lo })),
 });
 
-const json = (body) => ({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(body) });
-const bboxOf = (data) => (decodeURIComponent(data).match(/\(([\d.,-]+)\)/) || [])[1] || '?';
+const tile = (kind, elemente, partial = false) => ({
+  status: 200,
+  contentType: 'application/json',
+  body: JSON.stringify({ v: 1, kind, partial, items: packTile(kind, elemente) }),
+});
+const kindOf = (route) => new URL(route.request().url()).searchParams.get('kind');
 
 async function withPage(fn) {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium' });
@@ -29,118 +34,116 @@ async function withPage(fn) {
   }
 }
 
-// 1) Eine laufende Abfrage darf beim Verschieben der Karte nicht erneut starten
+// 1) Eine laufende Anfrage darf beim Verschieben nicht erneut starten
 await withPage(async (page) => {
-  const requests = [];
-  await page.route('**/api/interpreter', async (route) => {
-    const data = route.request().postData() || '';
-    if (!data.includes('highway')) return route.fulfill(json({ elements: [] }));
-    requests.push(bboxOf(data));
-    await new Promise((r) => setTimeout(r, 1200)); // langsame Antwort
-    await route.fulfill(json({ elements: [wayFor(1, LAT)] }));
+  const angefragt = [];
+  await page.route('**/api/tiles*', async (route) => {
+    const url = new URL(route.request().url());
+    if (kindOf(route) === 'trails') angefragt.push(url.search);
+    await new Promise((r) => setTimeout(r, 900)); // langsame Antwort
+    await route.fulfill(tile(kindOf(route), kindOf(route) === 'peaks' ? [] : [wayFor(1, LAT)]));
   });
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.alpenkarte?.view, null, { timeout: 20000 });
-  // Karte mehrfach leicht bewegen, während die Abfragen noch laufen
   for (let i = 0; i < 5; i++) {
-    await page.evaluate((n) => window.alpenkarte.view.map.panBy([n, 0], { animate: false }), 4);
+    await page.evaluate(() => window.alpenkarte.view.map.panBy([4, 0], { animate: false }));
     await page.waitForTimeout(120);
   }
   await page.waitForTimeout(2500);
-  const doppelt = requests.filter((b, i) => requests.indexOf(b) !== i);
-  assert.deepEqual(doppelt, [], `keine Kachel doppelt angefragt (angefragt: ${requests.length})`);
-  console.log(`✓ Laufende Abfragen werden beim Verschieben nicht erneut gestartet (${requests.length} Abfragen)`);
+  const doppelt = angefragt.filter((s, i) => angefragt.indexOf(s) !== i);
+  assert.deepEqual(doppelt, [], `keine Kachel doppelt angefragt (insgesamt ${angefragt.length})`);
+  console.log(`✓ Laufende Anfragen werden beim Verschieben nicht erneut gestartet (${angefragt.length} Kacheln)`);
 });
 
-// 2) Nach einem Serverfehler wird von selbst erneut versucht
+// 2) Serverfehler: Grund sichtbar, danach automatischer neuer Versuch
 await withPage(async (page) => {
-  let attempts = 0;
-  await page.route('**/api/interpreter', (route) => {
-    const data = route.request().postData() || '';
-    if (!data.includes('highway')) return route.fulfill(json({ elements: [] }));
-    attempts++;
-    if (attempts === 1) return route.fulfill({ status: 500, headers: { 'Access-Control-Allow-Origin': '*' }, body: 'kaputt' });
-    return route.fulfill(json({ elements: [wayFor(2, LAT)] }));
+  let kaputt = true;
+  await page.route('**/api/tiles*', (route) => {
+    if (kindOf(route) === 'peaks') return route.fulfill(tile('peaks', []));
+    if (kaputt) {
+      return route.fulfill({ status: 503, contentType: 'application/json',
+        body: JSON.stringify({ error: 'Kein Overpass-Server erreichbar', details: ['overpass-api.de: ausgelastet (429)'] }) });
+    }
+    return route.fulfill(tile('trails', [wayFor(2, LAT)]));
   });
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.alpenkarte?.view?.loader?.failedCount > 0, null, { timeout: 20000 });
-  const warnung = await page.textContent('#status');
-  assert.match(warnung, /nicht geladen/);
-  const details = await page.textContent('#issue-list');
-  assert.match(details, /Overpass antwortete mit 500/, 'der Grund steht in der Seitenleiste');
-  await page.waitForFunction(() => window.alpenkarte.view.graph.size > 0, null, { timeout: 20000 });
-  assert.ok(attempts >= 2, 'es wurde erneut versucht');
-  console.log(`✓ Nach einem Fehler wird von selbst erneut geladen (Hinweis: „${warnung.trim()}")`);
-  console.log('✓ Der Grund steht sichtbar in der Seitenleiste, nicht nur in der Konsole');
+
+  assert.match(await page.textContent('#status'), /nicht geladen/);
+  assert.match(await page.textContent('#issue-list'), /ausgelastet \(429\)/, 'der Grund vom Server steht in der Liste');
+  console.log('✓ Der Grund des Servers wird durchgereicht und angezeigt');
+
+  kaputt = false;
+  await page.waitForFunction(() => window.alpenkarte.view.graph.size > 0, null, { timeout: 30000 });
+  await page.waitForFunction(() => window.alpenkarte.view.loader.failedCount === 0, null, { timeout: 30000 });
+  console.log('✓ Danach lädt es von selbst nach, die Meldung verschwindet');
 });
 
-// 3) Zeitüberschreitung: Teildaten behalten und die Kachel vierteln
+// 3) Teildaten: anzeigen, aber die Kachel offen halten
 await withPage(async (page) => {
-  const bboxSpan = (data) => {
-    const zahlen = (bboxOf(data).match(/-?[\d.]+/g) || []).map(Number);
-    return zahlen.length === 4 ? +(zahlen[2] - zahlen[0]).toFixed(4) : 0;
-  };
-  const spans = [];
-  await page.route('**/api/interpreter', (route) => {
-    const data = route.request().postData() || '';
-    if (!data.includes('highway')) return route.fulfill(json({ elements: [] }));
-    const span = bboxSpan(data);
-    spans.push(span);
-    // Die volle Kachel läuft in die Zeitüberschreitung und liefert nur einen
-    // Teil; die geviertelten Kacheln antworten vollständig.
-    if (span > 0.03) {
-      return route.fulfill(json({
-        elements: [wayFor(3, LAT)],
-        remark: 'runtime error: Query timed out in "query" at line 2 after 90 seconds.',
-      }));
-    }
-    return route.fulfill(json({ elements: [wayFor(4, LAT + 0.001), wayFor(5, LAT + 0.002)] }));
-  });
-  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => window.alpenkarte?.view?.graph?.size >= 3, null, { timeout: 30000 });
-
-  const teildaten = await page.evaluate(() => window.alpenkarte.view.graph.ways.has(3));
-  assert.equal(teildaten, true, 'die Teildaten der abgebrochenen Abfrage werden angezeigt');
-  console.log('✓ Teildaten einer abgebrochenen Abfrage gehen nicht verloren');
-
-  const klein = () => spans.filter((s) => s > 0 && s < 0.03);
-  for (let i = 0; i < 60 && klein().length < 4; i++) await page.waitForTimeout(200);
-  const geviertelt = klein();
-  assert.ok(geviertelt.length >= 4, `Kachel wurde geviertelt (kleinere Abfragen: ${geviertelt.length})`);
-  assert.ok(Math.abs(geviertelt[0] - 0.0204) < 0.002, `halbe Kantenlaenge, war ${geviertelt[0]}`);
-  console.log(`✓ Zu große Kachel wird selbsttätig geviertelt (${geviertelt.length} kleinere Abfragen)`);
-
-  const zustand = await page.evaluate(() => ({
-    offen: window.alpenkarte.view.loader.failedCount,
-    kleineGeladen: [...window.alpenkarte.view.loader.done].filter((k) => k.startsWith('trails/1/')).length,
-  }));
-  assert.equal(zustand.offen, 0, 'nach dem Vierteln bleibt nichts offen');
-  assert.ok(zustand.kleineGeladen >= 4, 'die kleineren Kacheln sind geladen');
-  console.log('✓ Danach ist der Bereich vollständig geladen, ohne offene Meldung');
-
-  // Die abgebrochene Antwort darf nicht im Zwischenspeicher liegen
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => window.alpenkarte?.view?.graph?.size >= 2, null, { timeout: 30000 });
-  console.log('✓ Nach dem Neuladen sind die Wege wieder da');
-});
-
-// 4) „Diesen Ausschnitt neu laden" holt trotz Zwischenspeicher frisch
-await withPage(async (page) => {
-  let served = 0;
-  await page.route('**/api/interpreter', (route) => {
-    const data = route.request().postData() || '';
-    if (!data.includes('highway')) return route.fulfill(json({ elements: [] }));
-    served++;
-    return route.fulfill(json({ elements: [wayFor(4, LAT)] }));
+  let teilweise = true;
+  await page.route('**/api/tiles*', (route) => {
+    if (kindOf(route) === 'peaks') return route.fulfill(tile('peaks', []));
+    return teilweise
+      ? route.fulfill(tile('trails', [wayFor(3, LAT)], true))
+      : route.fulfill(tile('trails', [wayFor(3, LAT), wayFor(4, LAT + 0.002)]));
   });
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.alpenkarte?.view?.graph?.size > 0, null, { timeout: 20000 });
-  const vorher = served;
+
+  const zustand = await page.evaluate(() => ({
+    wege: window.alpenkarte.view.graph.size,
+    offen: window.alpenkarte.view.loader.failedCount,
+    alsTeilweiseGemerkt: window.alpenkarte.view.loader.failures.every((f) => f.partial),
+    imZwischenspeicher: [...window.alpenkarte.view.loader.done].filter((k) => k.startsWith('trails/')).length,
+  }));
+  assert.ok(zustand.wege > 0, 'die Teildaten sind auf der Karte');
+  assert.ok(zustand.offen > 0, 'die Kachel bleibt offen');
+  assert.equal(zustand.alsTeilweiseGemerkt, true);
+  assert.equal(zustand.imZwischenspeicher, 0, 'Teildaten werden nicht als fertig abgelegt');
+  assert.match(await page.textContent('#issue-list'), /nur teilweise/);
+  console.log('✓ Teildaten werden angezeigt, die Kachel bleibt offen und wird nicht abgelegt');
+
+  teilweise = false;
+  await page.click('.status-btn');
+  // Erst auf die neuen Daten warten – der Zähler steht schon beim Klick auf 0.
+  await page.waitForFunction(() => window.alpenkarte.view.graph.size >= 2, null, { timeout: 20000 });
+  await page.waitForFunction(() => window.alpenkarte.view.loader.failedCount === 0, null, { timeout: 20000 });
+  console.log('✓ Beim nächsten Versuch wird vollständig geladen');
+});
+
+// 4) Ohne eigenen Server: Rückfall auf direkte Overpass-Abfragen
+await withPage(async (page) => {
+  let overpassAufrufe = 0;
+  await page.route('**/api/tiles*', (route) => route.fulfill({ status: 404, contentType: 'text/plain', body: 'Nicht gefunden' }));
+  await page.route('**/api/interpreter', (route) => {
+    overpassAufrufe++;
+    const data = route.request().postData() || '';
+    return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' },
+      body: JSON.stringify({ elements: data.includes('natural') ? [] : [wayFor(5, LAT)] }) });
+  });
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.alpenkarte?.view?.graph?.size > 0, null, { timeout: 20000 });
+  assert.ok(overpassAufrufe > 0, 'es wurde direkt bei Overpass gefragt');
+  assert.equal(await page.evaluate(() => window.alpenkarte.view.loader.direct), true);
+  console.log(`✓ Fehlt die eigene API, wird direkt bei Overpass geladen (${overpassAufrufe} Abfragen)`);
+});
+
+// 5) „Diesen Ausschnitt neu laden“ holt frisch
+await withPage(async (page) => {
+  let geliefert = 0;
+  await page.route('**/api/tiles*', (route) => {
+    if (kindOf(route) === 'trails') geliefert++;
+    return route.fulfill(tile(kindOf(route), kindOf(route) === 'peaks' ? [] : [wayFor(6, LAT)]));
+  });
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.alpenkarte?.view?.graph?.size > 0, null, { timeout: 20000 });
+  const vorher = geliefert;
   await page.evaluate(() => document.body.classList.add('panel-open'));
   await page.click('#reload-area');
   await page.waitForTimeout(1500);
-  assert.ok(served > vorher, `Ausschnitt wurde neu abgefragt (${vorher} -> ${served})`);
-  console.log(`✓ „Diesen Ausschnitt neu laden" fragt frisch ab (${served - vorher} Abfragen)`);
+  assert.ok(geliefert > vorher, `neu abgefragt (${vorher} -> ${geliefert})`);
+  console.log(`✓ „Diesen Ausschnitt neu laden“ fragt frisch ab (${geliefert - vorher} Kacheln)`);
 });
 
 console.log('\nAlle Ladetests bestanden.');

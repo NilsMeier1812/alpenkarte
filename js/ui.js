@@ -1,6 +1,7 @@
 // Seitenleiste: Statistik, Listen, Suche, Datenverwaltung.
 
-import { BASEMAPS, PEAK_TILE, TRAIL_TILE, TRAIL_ZOOM_MIN } from './config.js';
+import { BASEMAPS, TRAIL_ZOOM_MIN } from './config.js';
+import { tileBounds } from './tiles.js';
 import { formatKm } from './geo.js';
 import { escapeHtml } from './html.js';
 
@@ -169,15 +170,15 @@ export class Ui {
     }
     list.innerHTML = failures
       .map((f) => {
-        const [art, stufe, x, y] = f.key.split('/');
-        // Aus der Kachel die Mitte in Koordinaten – damit man weiß, wo es klemmt.
-        const size = (art === 'peaks' ? PEAK_TILE : TRAIL_TILE) / 2 ** Number(stufe);
-        const lat = (Number(y) + 0.5) * size;
-        const lon = (Number(x) + 0.5) * size;
+        const [art, z, x, y] = f.key.split('/');
+        // Kachelmitte in Koordinaten – damit man weiß, wo es klemmt.
+        const b = tileBounds(Number(z), Number(x), Number(y));
+        const lat = (b.north + b.south) / 2;
+        const lon = (b.east + b.west) / 2;
         const ort = `${lat.toFixed(3).replace('.', ',')} / ${lon.toFixed(3).replace('.', ',')}`;
         return `<li class="issue" data-lat="${lat}" data-lon="${lon}" title="Dorthin springen">
-          <span class="li-main">${art === 'peaks' ? 'Gipfel' : 'Wege'} bei ${ort}</span>
-          <span class="li-sub">${escapeHtml(f.message || 'unbekannter Fehler')}${f.endpoint ? ` · ${escapeHtml(f.endpoint)}` : ''} · ${f.tries} Versuch${f.tries === 1 ? '' : 'e'}${f.aufgegeben ? ', aufgegeben' : ''}</span>
+          <span class="li-main">${art === 'peaks' ? 'Gipfel' : 'Wege'} bei ${ort}${f.partial ? ' (nur teilweise)' : ''}</span>
+          <span class="li-sub">${escapeHtml(f.message || 'unbekannter Fehler')} · ${f.tries} Versuch${f.tries === 1 ? '' : 'e'}${f.aufgegeben ? ', aufgegeben' : ''}</span>
         </li>`;
       })
       .join('');

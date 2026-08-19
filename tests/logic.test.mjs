@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { locate, normalize, addInterval, removeInterval, covers, runsToIntervals, intervalsToRuns } from '../js/runs.js';
-import { TrailGraph, wayFromOverpass, wayLabel } from '../js/graph.js';
+import { TrailGraph, wayLabel } from '../js/graph.js';
+import { buildQuery, packTile, unpackTile, isPartial, TRAIL_HIGHWAYS } from '../js/osmdata.js';
+import { TRAIL_Z, lonToTileX, latToTileY, tileBounds, tileKey } from '../js/tiles.js';
 import { pathLength, distance } from '../js/geo.js';
 
 const line = (n, lat0 = 47.4) => Array.from({ length: n }, (_, i) => [lat0 + i * 0.001, 11.0]);
@@ -102,13 +104,82 @@ test('derselbe Weg wird nicht doppelt gezählt', () => {
   assert.equal(g.segments(1).length, 1);
 });
 
-test('wayFromOverpass prüft die Daten', () => {
-  assert.equal(wayFromOverpass({ type: 'node', id: 1 }), null);
-  assert.equal(wayFromOverpass({ type: 'way', id: 1, nodes: [1, 2], geometry: [{ lat: 1, lon: 2 }] }), null);
-  const w = wayFromOverpass({ type: 'way', id: 5, nodes: [1, 2], geometry: [{ lat: 47, lon: 11 }, { lat: 47.1, lon: 11 }], tags: { name: 'Steig' } });
-  assert.deepEqual(w.latlngs, [[47, 11], [47.1, 11]]);
-  assert.equal(wayLabel(w.tags), 'Steig');
-  assert.equal(wayLabel({ highway: 'track' }), 'Forstweg');
+test('Kachelrechnung: Punkt liegt in seiner Kachel', () => {
+  const [lat, lon] = [47.4213, 11.0975];
+  const x = lonToTileX(lon, TRAIL_Z);
+  const y = latToTileY(lat, TRAIL_Z);
+  const b = tileBounds(TRAIL_Z, x, y);
+  assert.ok(lon >= b.west && lon < b.east, 'Länge innerhalb der Kachel');
+  assert.ok(lat <= b.north && lat > b.south, 'Breite innerhalb der Kachel');
+  assert.equal(tileKey('trails', TRAIL_Z, x, y), `trails/${TRAIL_Z}/${x}/${y}`);
+});
+
+test('Kachelrechnung: Nachbarkacheln stoßen lückenlos aneinander', () => {
+  const x = lonToTileX(11.0975, TRAIL_Z);
+  const y = latToTileY(47.4213, TRAIL_Z);
+  const a = tileBounds(TRAIL_Z, x, y);
+  const rechts = tileBounds(TRAIL_Z, x + 1, y);
+  const unten = tileBounds(TRAIL_Z, x, y + 1);
+  assert.ok(Math.abs(a.east - rechts.west) < 1e-9, 'kein Spalt nach rechts');
+  assert.ok(Math.abs(a.south - unten.north) < 1e-9, 'kein Spalt nach unten');
+});
+
+test('Overpass-Abfrage nutzt Gleichheit statt regulärem Ausdruck', () => {
+  const q = buildQuery('trails', tileBounds(TRAIL_Z, 4321, 2876));
+  for (const h of TRAIL_HIGHWAYS) assert.match(q, new RegExp(`way\\["highway"="${h}"\\]`));
+  assert.doesNotMatch(q, /~/, 'kein regulärer Ausdruck – der umgeht den Tag-Index');
+  assert.match(q, /out body geom;/, 'Knoten-IDs und Geometrie werden gebraucht');
+});
+
+test('Kompaktformat überlebt Hin- und Rückweg verlustfrei', () => {
+  const elements = [{
+    type: 'way', id: 42, nodes: [1000000001, 1000000002, 1000000090],
+    geometry: [{ lat: 47.421345, lon: 11.097512 }, { lat: 47.42151, lon: 11.09766 }, { lat: 47.4218, lon: 11.0981 }],
+    tags: { highway: 'path', name: 'Steig', sac_scale: 'mountain_hiking', ele: '1200', source: 'egal' },
+  }];
+  const [w] = unpackTile('trails', packTile('trails', elements));
+  assert.equal(w.id, 42);
+  assert.deepEqual(w.nodes, [1000000001, 1000000002, 1000000090]);
+  assert.equal(w.tags.name, 'Steig');
+  assert.equal(w.tags.sac_scale, 'mountain_hiking');
+  for (let i = 0; i < 3; i++) {
+    assert.ok(Math.abs(w.latlngs[i][0] - elements[0].geometry[i].lat) < 1e-6, 'Breite genau genug');
+    assert.ok(Math.abs(w.latlngs[i][1] - elements[0].geometry[i].lon) < 1e-6, 'Länge genau genug');
+  }
+});
+
+test('Kompaktformat spart deutlich Platz', () => {
+  const geometry = [];
+  const nodes = [];
+  for (let i = 0; i < 40; i++) {
+    nodes.push(2000000000 + i * 7);
+    geometry.push({ lat: 47.4 + i * 0.0002, lon: 11.09 + i * 0.0003 });
+  }
+  const elements = [{ type: 'way', id: 99, nodes, geometry,
+    tags: { highway: 'path', name: 'Langer Steig', surface: 'ground', source: 'survey', 'source:date': '2023' } }];
+  const roh = JSON.stringify(elements).length;
+  const klein = JSON.stringify(packTile('trails', elements)).length;
+  assert.ok(klein < roh * 0.45, `deutlich kleiner: ${klein} statt ${roh} Zeichen`);
+});
+
+test('Kaputte Geometrie wird aussortiert', () => {
+  assert.deepEqual(packTile('trails', [{ type: 'way', id: 1, nodes: [1, 2], geometry: [{ lat: 1, lon: 2 }] }]), []);
+  assert.deepEqual(packTile('trails', [{ type: 'node', id: 1 }]), []);
+});
+
+test('Gipfel werden mit Höhe übernommen', () => {
+  const [p] = unpackTile('peaks', packTile('peaks', [
+    { type: 'node', id: 7, lat: 47.4211, lon: 10.9853, tags: { natural: 'peak', name: 'Zugspitze', ele: '2962' } },
+  ]));
+  assert.equal(p.name, 'Zugspitze');
+  assert.equal(p.ele, 2962);
+  assert.ok(Math.abs(p.lat - 47.4211) < 1e-6);
+});
+
+test('Abbruchmeldung von Overpass wird erkannt', () => {
+  assert.equal(isPartial({ remark: 'runtime error: Query timed out in "query" at line 2 after 22 seconds.' }), true);
+  assert.equal(isPartial({ remark: 'runtime error: Query run out of memory' }), true);
+  assert.equal(isPartial({ elements: [] }), false);
 });
 
 test('Entfernungen stimmen ungefähr', () => {

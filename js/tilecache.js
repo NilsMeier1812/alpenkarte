@@ -5,7 +5,7 @@
 const DB_NAME = 'alpenkarte-tiles';
 const STORE = 'tiles';
 // Wird hochgezählt, wenn ältere Einträge nicht mehr vertrauenswürdig sind.
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 const MAX_AGE = 14 * 24 * 60 * 60 * 1000; // 14 Tage
 // Leere Antworten kürzer behalten: entweder ist dort wirklich nichts, oder es
 // war doch eine Störung beim Abruf.

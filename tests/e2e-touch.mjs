@@ -2,6 +2,7 @@
 // nächstgelegene Weg genommen?
 import { chromium, devices } from 'playwright';
 import assert from 'node:assert/strict';
+import { packTile } from '../js/osmdata.js';
 
 const BASE = process.env.BASE_URL || 'http://localhost:8080';
 const LAT = 47.4213;
@@ -27,9 +28,11 @@ const page = await browser.newPage({ ...devices['iPhone 13'], isMobile: true, ha
 const errors = [];
 page.on('pageerror', (err) => errors.push(String(err)));
 
-await page.route('**/api/interpreter', (route) =>
-  route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' },
-    body: JSON.stringify({ elements: (route.request().postData() || '').includes('natural') ? PEAKS : WAYS }) }));
+await page.route('**/api/tiles*', (route) => {
+  const kind = new URL(route.request().url()).searchParams.get('kind');
+  route.fulfill({ status: 200, contentType: 'application/json',
+    body: JSON.stringify({ v: 1, kind, partial: false, items: packTile(kind, kind === 'peaks' ? PEAKS : WAYS) }) });
+});
 await page.route(/^https:\/\/.*(tile|arcgis)/i, (route) =>
   route.fulfill({ status: 200, contentType: 'image/png', body: PNG }));
 

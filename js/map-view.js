@@ -3,20 +3,19 @@
 import {
   BASEMAPS,
   COLORS,
-  PEAK_TILE,
   PEAK_ZOOM_MIN,
   ROUTES_OVERLAY,
   START_VIEW,
-  TRAIL_TILE,
   TRAIL_ZOOM_MIN,
   MAX_TILES_PER_VIEW,
   VIEW_KEY,
 } from './config.js';
 import { formatLength } from './geo.js';
 import { escapeHtml } from './html.js';
-import { TrailGraph, wayFromOverpass, wayLabel } from './graph.js';
+import { TrailGraph, wayLabel } from './graph.js';
 import { isSegmentVisited, isWayVisited, toggleSegment, toggleWay } from './marks.js';
-import { OverpassLoader, tileKey, tilesForBounds } from './overpass.js';
+import { TileLoader } from './loader.js';
+import { PEAK_Z, TRAIL_Z, tileKey, tilesForBounds } from './tiles.js';
 import { cacheDelete } from './tilecache.js';
 
 const SAC = {
@@ -28,11 +27,6 @@ const SAC = {
   difficult_alpine_hiking: 'T6 – schwieriges Alpinwandern',
 };
 
-
-function parseEle(value) {
-  const num = parseFloat(String(value ?? '').replace(',', '.'));
-  return Number.isFinite(num) ? Math.round(num) : null;
-}
 
 /** Ab welcher Höhe Gipfel gezeigt werden – sonst ist die Karte bei kleinem Zoom zu voll. */
 function minEleForZoom(zoom) {
@@ -65,8 +59,8 @@ export class MapView {
     this.tapRadius = this.coarsePointer ? 32 : 14;
 
     this.#initMap();
-    this.loader = new OverpassLoader(
-      (kind, elements) => this.#ingest(kind, elements),
+    this.loader = new TileLoader(
+      (kind, items) => this.#ingest(kind, items),
       (state) => this.#loaderState(state),
     );
     this.store.onChange((detail) => this.#onStoreChange(detail));
@@ -154,22 +148,17 @@ export class MapView {
   #tilesForView() {
     const zoom = this.map.getZoom();
     const bounds = this.map.getBounds().pad(0.1);
-    const center = this.map.getCenter();
     const result = { keys: new Set(), peaks: [], trails: [] };
 
-    const collect = (kind, size) => {
-      const cx = center.lng / size;
-      const cy = center.lat / size;
-      const tiles = tilesForBounds(bounds, size)
-        .map((t) => ({ ...t, kind, weite: Math.hypot(t.x + 0.5 - cx, t.y + 0.5 - cy) }))
-        .sort((a, b) => a.weite - b.weite)
-        .slice(0, MAX_TILES_PER_VIEW);
-      tiles.forEach((t) => result.keys.add(tileKey(kind, 0, t.x, t.y)));
+    const collect = (kind, dataZoom) => {
+      const tiles = tilesForBounds(bounds, dataZoom, MAX_TILES_PER_VIEW)
+        .map((t) => ({ ...t, kind }));
+      tiles.forEach((t) => result.keys.add(tileKey(kind, t.z, t.x, t.y)));
       return tiles;
     };
 
-    if (zoom >= PEAK_ZOOM_MIN) result.peaks = collect('peaks', PEAK_TILE);
-    if (zoom >= TRAIL_ZOOM_MIN) result.trails = collect('trails', TRAIL_TILE);
+    if (zoom >= PEAK_ZOOM_MIN) result.peaks = collect('peaks', PEAK_Z);
+    if (zoom >= TRAIL_ZOOM_MIN) result.trails = collect('trails', TRAIL_Z);
     return result;
   }
 
@@ -182,19 +171,12 @@ export class MapView {
     this.#status();
   }
 
-  #ingest(kind, elements) {
+  #ingest(kind, items) {
     if (kind === 'peaks') {
       let added = 0;
-      for (const el of elements) {
-        if (el.type !== 'node' || this.peaks.has(el.id)) continue;
-        const tags = el.tags || {};
-        this.peaks.set(el.id, {
-          id: el.id,
-          name: tags.name || tags['name:de'] || 'Gipfel',
-          ele: parseEle(tags.ele),
-          lat: el.lat,
-          lon: el.lon,
-        });
+      for (const peak of items) {
+        if (this.peaks.has(peak.id)) continue;
+        this.peaks.set(peak.id, peak);
         added++;
       }
       if (added) this.#renderPeaks();
@@ -202,19 +184,8 @@ export class MapView {
     }
 
     const changed = new Set();
-    let unusable = 0;
-    for (const el of elements) {
-      const way = wayFromOverpass(el);
-      if (!way) {
-        unusable++;
-        continue;
-      }
+    for (const way of items) {
       for (const id of this.graph.addWay(way)) changed.add(id);
-    }
-    if (unusable && !changed.size) {
-      console.warn(
-        `${unusable} Wege ohne verwertbare Geometrie erhalten – liefert der Overpass-Server "out body geom"?`,
-      );
     }
     // Bereits gezeichnete Wege neu zerlegen, der Rest kommt über refreshVisible.
     for (const id of changed) {

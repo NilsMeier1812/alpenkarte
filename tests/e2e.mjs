@@ -1,6 +1,7 @@
 // Integrationstest im echten Browser mit erfundenen Overpass-Antworten.
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
+import { packTile } from '../js/osmdata.js';
 
 const BASE = process.env.BASE_URL || 'http://localhost:8080';
 const LAT = 47.4213;
@@ -43,14 +44,12 @@ const errors = [];
 page.on('pageerror', (err) => errors.push(String(err)));
 page.on('console', (msg) => { if (msg.type() === 'error') errors.push(msg.text()); });
 
-await page.route('**/api/interpreter', async (route) => {
-  const data = route.request().postData() || '';
-  const elements = data.includes('natural') ? PEAKS : WAYS;
+await page.route('**/api/tiles*', async (route) => {
+  const kind = new URL(route.request().url()).searchParams.get('kind');
   await route.fulfill({
     status: 200,
     contentType: 'application/json',
-    headers: { 'Access-Control-Allow-Origin': '*' },
-    body: JSON.stringify({ elements }),
+    body: JSON.stringify({ v: 1, kind, partial: false, items: packTile(kind, kind === 'peaks' ? PEAKS : WAYS) }),
   });
 });
 await page.route(/^https:\/\/.*(tile|arcgis)/i, (route) =>

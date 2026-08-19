@@ -5,8 +5,8 @@
   "description": "Interaktive Alpenkarte: gegangene Wegabschnitte und bestiegene Gipfel festhalten.",
   "type": "module",
   "scripts": {
-    "start": "python3 -m http.server 8080",
-    "test": "node --test tests/logic.test.mjs",
+    "start": "node scripts/dev-server.mjs",
+    "test": "node --test tests/logic.test.mjs tests/api.test.mjs",
     "test:e2e": "node tests/e2e.mjs",
     "test:touch": "node tests/e2e-touch.mjs",
     "test:loading": "node tests/e2e-loading.mjs",
