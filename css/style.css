@@ -261,6 +261,18 @@ kbd {
 
 .status { top: 70px; }
 .status.warn { background: rgba(180, 83, 9, 0.95); font-weight: 600; }
+.status-btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 3px 10px;
+  margin-left: 4px;
+  font: inherit;
+  font-size: 12px;
+  background: #fff;
+  color: #92400e;
+  font-weight: 600;
+  cursor: pointer;
+}
 .toast { bottom: 28px; background: rgba(232, 89, 12, 0.95); }
 
 /* Zoom-Knöpfe unter die Kopfleiste schieben */

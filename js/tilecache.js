@@ -4,7 +4,12 @@
 
 const DB_NAME = 'alpenkarte-tiles';
 const STORE = 'tiles';
+// Wird hochgezählt, wenn ältere Einträge nicht mehr vertrauenswürdig sind.
+const CACHE_VERSION = 2;
 const MAX_AGE = 14 * 24 * 60 * 60 * 1000; // 14 Tage
+// Leere Antworten kürzer behalten: entweder ist dort wirklich nichts, oder es
+// war doch eine Störung beim Abruf.
+const EMPTY_MAX_AGE = 24 * 60 * 60 * 1000;
 
 let dbPromise = null;
 
@@ -37,7 +42,9 @@ export async function cacheGet(key) {
       const req = tx.objectStore(STORE).get(key);
       req.onsuccess = () => {
         const row = req.result;
-        if (!row || Date.now() - row.time > MAX_AGE) return resolve(null);
+        if (!row || row.v !== CACHE_VERSION) return resolve(null);
+        const maxAge = row.elements?.length ? MAX_AGE : EMPTY_MAX_AGE;
+        if (Date.now() - row.time > maxAge) return resolve(null);
         resolve(row.elements);
       };
       req.onerror = () => resolve(null);
@@ -52,9 +59,21 @@ export async function cachePut(key, elements) {
   if (!db) return;
   try {
     const tx = db.transaction(STORE, 'readwrite');
-    tx.objectStore(STORE).put({ key, elements, time: Date.now() });
+    tx.objectStore(STORE).put({ key, elements, time: Date.now(), v: CACHE_VERSION });
   } catch {
     /* Speicher voll o. Ä. – dann eben ohne Cache */
+  }
+}
+
+/** Einzelne Kacheln aus dem Zwischenspeicher werfen (für „neu laden“). */
+export async function cacheDelete(keys) {
+  const db = await openDb();
+  if (!db) return;
+  try {
+    const store = db.transaction(STORE, 'readwrite').objectStore(STORE);
+    for (const key of keys) store.delete(key);
+  } catch {
+    /* egal */
   }
 }
 

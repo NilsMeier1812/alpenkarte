@@ -101,20 +101,36 @@ vendor/leaflet/     Leaflet 1.9.4 (lokal, kein CDN nötig)
 ## Tests
 
 ```bash
-npm test             # Logik: Kreuzungserkennung, Intervalle, Längen (Node)
-npm run start        # in einem zweiten Terminal, dann:
-npm run test:e2e     # Klicks im echten Browser, mit erfundenen Overpass-Antworten
-npm run test:touch   # dasselbe als Handy mit Fingertipps
+npm test              # Logik: Kreuzungserkennung, Intervalle, Längen (Node)
+npm run start         # in einem zweiten Terminal, dann:
+npm run test:e2e      # Klicks im echten Browser, mit erfundenen Overpass-Antworten
+npm run test:touch    # dasselbe als Handy mit Fingertipps
+npm run test:loading  # Nachladen: doppelte Abfragen, Wiederholung nach Störungen
+npm run test:all      # alles nacheinander
 ```
 
 Der Browsertest prüft die ganze Kette: Zerlegen an Kreuzungen, Markieren, Verschmelzen benachbarter Abschnitte,
 Entmarkieren, Rückgängig, Gipfel abhaken, Neuladen und Export. Der Touch-Test misst zusätzlich, wie weit man
 danebentippen darf, dass der nähere von zwei Wegen gewinnt und dass bei zu kleinem Zoom ein Hinweis erscheint.
 
+## Wenn in einer Gegend Wege fehlen
+
+Die Wege werden in Blöcken von 0,08° geladen (rund 9 × 6 km). Fehlt einmal ein ganzer Landstrich und nicht nur
+einzelne Wege, ist die Abfrage für genau diesen Block schiefgegangen. Dagegen laufen mehrere Vorkehrungen:
+
+- Fehlgeschlagene Blöcke werden **automatisch erneut versucht**, mit wachsender Wartezeit (2 s bis 60 s) und beim
+  nächsten Versuch über einen anderen Overpass-Server.
+- Solange etwas fehlt, steht das **oben in der Statusleiste** samt Knopf *Jetzt nochmal* – eine stille Lücke
+  soll es nicht geben.
+- Overpass meldet eine Zeitüberschreitung mit HTTP 200 und einem `remark`-Feld statt mit einem Fehlercode. Das
+  wird als Störung erkannt und **nicht** im Zwischenspeicher abgelegt (sonst bliebe die Gegend 14 Tage leer).
+- Hilft alles nichts: *Karte → Diesen Ausschnitt neu laden* holt den sichtbaren Bereich am Zwischenspeicher
+  vorbei frisch vom Server.
+
 ## Grenzen und Stolpersteine
 
 - **Overpass ist ein freier Dienst.** Bei sehr schnellem Herumscrollen kann eine Abfrage abgelehnt werden; die
-  Karte versucht es dann bei einem anderen Server erneut. Der Zwischenspeicher hilft beim zweiten Besuch.
+  Karte wartet dann und versucht es bei einem anderen Server erneut.
 - **Kreuzungen entstehen nur aus geladenen Wegen.** Am Rand des geladenen Bereichs kann ein Abschnitt daher
   länger sein als er sein müsste. Sobald der Nachbarbereich nachgeladen ist, stimmt die Zerlegung – die
   Markierungen bleiben dabei erhalten (siehe oben).

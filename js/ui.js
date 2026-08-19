@@ -56,6 +56,11 @@ export class Ui {
       this.search($('#search-input').value.trim());
     });
 
+    $('#reload-area').addEventListener('click', async () => {
+      const count = await this.view.reloadArea();
+      this.toast(`${count} Bereich${count === 1 ? '' : 'e'} werden frisch geladen`);
+    });
+
     $('#export-btn').addEventListener('click', () => this.exportData());
     $('#import-btn').addEventListener('click', () => $('#import-file').click());
     $('#import-file').addEventListener('change', (ev) => this.importData(ev.target.files[0]));
@@ -115,20 +120,37 @@ export class Ui {
       : '<li class="empty">Noch keine Wege markiert. Zoom auf die Berge und klick einen Weg an.</li>';
   }
 
-  status({ zoom, pending, needZoom, autoLoad }) {
+  status({ zoom, pending, failed, needZoom, autoLoad }) {
     const el = $('#status');
     let text = '';
     let warn = false;
+    let retry = false;
+
     if (needZoom) {
-      const steps = TRAIL_ZOOM_MIN - zoom;
-      text = `Noch ${steps}× hineinzoomen, dann kannst du Wege markieren`;
+      text = `Noch ${TRAIL_ZOOM_MIN - zoom}× hineinzoomen, dann kannst du Wege markieren`;
       warn = true;
+    } else if (failed > 0) {
+      // Lieber ein sichtbarer Hinweis als eine stille Lücke in der Karte.
+      text = `${failed} Bereich${failed === 1 ? '' : 'e'} nicht geladen – wird erneut versucht`;
+      warn = true;
+      retry = true;
     } else if (pending > 0) {
       text = `Lade Wege und Gipfel … (${pending})`;
     } else if (!autoLoad) {
       text = 'Nachladen ist pausiert';
     }
+
     el.textContent = text;
+    if (retry) {
+      const button = document.createElement('button');
+      button.className = 'status-btn';
+      button.textContent = 'Jetzt nochmal';
+      button.addEventListener('click', () => {
+        this.view.reloadFailed();
+        this.toast('Fehlende Bereiche werden neu geladen');
+      });
+      el.append(' ', button);
+    }
     el.classList.toggle('warn', warn);
     el.hidden = !text;
   }

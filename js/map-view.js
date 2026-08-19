@@ -17,6 +17,7 @@ import { escapeHtml } from './html.js';
 import { TrailGraph, wayFromOverpass, wayLabel } from './graph.js';
 import { isSegmentVisited, isWayVisited, toggleSegment, toggleWay } from './marks.js';
 import { OverpassLoader, tileKey, tilesForBounds } from './overpass.js';
+import { cacheDelete } from './tilecache.js';
 
 const SAC = {
   hiking: 'T1 – Wandern',
@@ -145,27 +146,35 @@ export class MapView {
 
   // — Daten nachladen ————————————————————————————————
 
-  refreshData() {
-    if (!this.autoLoad) return;
+  /** Welche Kacheln decken die aktuelle Ansicht ab? */
+  #tilesForView() {
     const zoom = this.map.getZoom();
     const bounds = this.map.getBounds().pad(0.1);
-    const keep = new Set();
+    const result = { keys: new Set(), peaks: [], trails: [] };
 
     if (zoom >= PEAK_ZOOM_MIN) {
       const tiles = tilesForBounds(bounds, PEAK_TILE);
       if (tiles.length <= MAX_TILES_PER_VIEW) {
-        tiles.forEach((t) => keep.add(tileKey('peaks', t.x, t.y)));
-        this.loader.request('peaks', tiles);
+        result.peaks = tiles;
+        tiles.forEach((t) => result.keys.add(tileKey('peaks', t.x, t.y)));
       }
     }
     if (zoom >= TRAIL_ZOOM_MIN) {
       const tiles = tilesForBounds(bounds, TRAIL_TILE);
       if (tiles.length <= MAX_TILES_PER_VIEW) {
-        tiles.forEach((t) => keep.add(tileKey('trails', t.x, t.y)));
-        this.loader.request('trails', tiles);
+        result.trails = tiles;
+        tiles.forEach((t) => result.keys.add(tileKey('trails', t.x, t.y)));
       }
     }
-    this.loader.prune(keep);
+    return result;
+  }
+
+  refreshData() {
+    if (!this.autoLoad) return;
+    const view = this.#tilesForView();
+    if (view.peaks.length) this.loader.request('peaks', view.peaks);
+    if (view.trails.length) this.loader.request('trails', view.trails);
+    this.loader.prune(view.keys);
     this.#status();
   }
 
@@ -213,7 +222,6 @@ export class MapView {
   }
 
   #loaderState(state) {
-    if (state.error) this.onStatus({ error: state.error });
     this.#status(state);
   }
 
@@ -222,10 +230,32 @@ export class MapView {
     this.onStatus({
       zoom,
       pending: state?.pending,
+      failed: this.loader?.failedCount || 0,
+      lastError: state?.error,
       needZoom: zoom < TRAIL_ZOOM_MIN,
       ways: this.graph.size,
       autoLoad: this.autoLoad,
     });
+  }
+
+  /** Fehlgeschlagene Kacheln sofort erneut versuchen. */
+  reloadFailed() {
+    this.loader.clearFailures();
+    this.refreshData();
+  }
+
+  /**
+   * Diesen Kartenausschnitt frisch von Overpass holen – auch dann, wenn er
+   * schon geladen oder zwischengespeichert ist.
+   */
+  async reloadArea() {
+    const view = this.#tilesForView();
+    const keys = [...view.keys];
+    this.loader.forget(keys);
+    await cacheDelete(keys);
+    if (view.peaks.length) this.loader.request('peaks', view.peaks);
+    if (view.trails.length) this.loader.request('trails', view.trails);
+    return keys.length;
   }
 
   // — Wege zeichnen ——————————————————————————————————
