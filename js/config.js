@@ -9,7 +9,6 @@ export const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
-  'https://overpass.osm.jp/api/interpreter',
 ];
 
 // Ab diesen Zoomstufen werden Daten geladen.
@@ -17,11 +16,16 @@ export const TRAIL_ZOOM_MIN = 13;
 export const PEAK_ZOOM_MIN = 11;
 
 // Kachelgröße der Abfragen in Grad (Wege deutlich kleiner als Gipfel).
-export const TRAIL_TILE = 0.08;
+// Klein genug, dass eine Abfrage auch auf einem gut ausgelasteten
+// Overpass-Server im Zeitbudget bleibt – zu große Kacheln liefern sonst nur
+// Teildaten. Bei Bedarf halbiert der Lader zusätzlich (siehe overpass.js).
+export const TRAIL_TILE = 0.04;
 export const PEAK_TILE = 0.25;
 
-// Mehr als so viele Kacheln pro Ansicht werden nicht automatisch geladen.
-export const MAX_TILES_PER_VIEW = 30;
+// So viele Kacheln werden pro Ansicht höchstens angefordert – die der
+// Bildschirmmitte am nächsten liegenden zuerst, damit dort sofort etwas
+// erscheint. Der Rest kommt beim Weiterschieben.
+export const MAX_TILES_PER_VIEW = 48;
 
 // Welche OSM-Wege gelten als begehbar.
 export const TRAIL_HIGHWAYS = 'path|footway|track|bridleway|steps|via_ferrata';

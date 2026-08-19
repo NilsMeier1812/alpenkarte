@@ -1,6 +1,6 @@
 // Seitenleiste: Statistik, Listen, Suche, Datenverwaltung.
 
-import { BASEMAPS, TRAIL_ZOOM_MIN } from './config.js';
+import { BASEMAPS, PEAK_TILE, TRAIL_TILE, TRAIL_ZOOM_MIN } from './config.js';
 import { formatKm } from './geo.js';
 import { escapeHtml } from './html.js';
 
@@ -68,6 +68,7 @@ export class Ui {
 
     $('#peak-list').addEventListener('click', (ev) => this.#listClick(ev));
     $('#way-list').addEventListener('click', (ev) => this.#listClick(ev));
+    $('#issue-list').addEventListener('click', (ev) => this.#listClick(ev));
   }
 
   #listClick(ev) {
@@ -120,7 +121,8 @@ export class Ui {
       : '<li class="empty">Noch keine Wege markiert. Zoom auf die Berge und klick einen Weg an.</li>';
   }
 
-  status({ zoom, pending, failed, needZoom, autoLoad }) {
+  status({ zoom, pending, failed, failures = [], needZoom, autoLoad }) {
+    this.#showIssues(failures);
     const el = $('#status');
     let text = '';
     let warn = false;
@@ -131,7 +133,8 @@ export class Ui {
       warn = true;
     } else if (failed > 0) {
       // Lieber ein sichtbarer Hinweis als eine stille Lücke in der Karte.
-      text = `${failed} Bereich${failed === 1 ? '' : 'e'} nicht geladen – wird erneut versucht`;
+      const grund = failures[0]?.message || '';
+      text = `${failed} Bereich${failed === 1 ? '' : 'e'} nicht geladen${grund ? `: ${grund}` : ''}`;
       warn = true;
       retry = true;
     } else if (pending > 0) {
@@ -153,6 +156,31 @@ export class Ui {
     }
     el.classList.toggle('warn', warn);
     el.hidden = !text;
+  }
+
+  /** Liste der gescheiterten Bereiche in der Seitenleiste. */
+  #showIssues(failures) {
+    const card = $('#issues-card');
+    const list = $('#issue-list');
+    card.hidden = failures.length === 0;
+    if (!failures.length) {
+      list.innerHTML = '';
+      return;
+    }
+    list.innerHTML = failures
+      .map((f) => {
+        const [art, stufe, x, y] = f.key.split('/');
+        // Aus der Kachel die Mitte in Koordinaten – damit man weiß, wo es klemmt.
+        const size = (art === 'peaks' ? PEAK_TILE : TRAIL_TILE) / 2 ** Number(stufe);
+        const lat = (Number(y) + 0.5) * size;
+        const lon = (Number(x) + 0.5) * size;
+        const ort = `${lat.toFixed(3).replace('.', ',')} / ${lon.toFixed(3).replace('.', ',')}`;
+        return `<li class="issue" data-lat="${lat}" data-lon="${lon}" title="Dorthin springen">
+          <span class="li-main">${art === 'peaks' ? 'Gipfel' : 'Wege'} bei ${ort}</span>
+          <span class="li-sub">${escapeHtml(f.message || 'unbekannter Fehler')}${f.endpoint ? ` · ${escapeHtml(f.endpoint)}` : ''} · ${f.tries} Versuch${f.tries === 1 ? '' : 'e'}${f.aufgegeben ? ', aufgegeben' : ''}</span>
+        </li>`;
+      })
+      .join('');
   }
 
   toast(text) {

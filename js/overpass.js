@@ -13,8 +13,16 @@ const RETRY_DELAYS = [2_000, 6_000, 15_000, 30_000, 60_000];
 // Bei Überlastung (429) oder Zeitüberschreitung des Servers mindestens so lange warten.
 const BUSY_DELAY = 12_000;
 
-export function tileKey(kind, x, y) {
-  return `${kind}/${x}/${y}`;
+// Eine Kachel wird durch Art, Teilungsstufe und Gitterposition beschrieben.
+// Stufe 0 ist die volle Kachelgröße, jede weitere Stufe halbiert die Kanten.
+const MAX_LEVEL = 3;
+
+export function tileKey(kind, level, x, y) {
+  return `${kind}/${level}/${x}/${y}`;
+}
+
+function tileSize(kind, level) {
+  return (kind === 'trails' ? TRAIL_TILE : PEAK_TILE) / 2 ** level;
 }
 
 /** Alle Kacheln, die den angezeigten Kartenausschnitt abdecken. */
@@ -30,8 +38,8 @@ export function tilesForBounds(bounds, size) {
   return tiles;
 }
 
-function bbox(kind, x, y) {
-  const size = kind === 'trails' ? TRAIL_TILE : PEAK_TILE;
+function bbox(kind, level, x, y) {
+  const size = tileSize(kind, level);
   const south = y * size;
   const west = x * size;
   // Etwas Überlappung, damit an den Kachelgrenzen keine Lücken entstehen.
@@ -41,22 +49,29 @@ function bbox(kind, x, y) {
     .join(',');
 }
 
-function query(kind, x, y) {
-  const box = bbox(kind, x, y);
+function query(kind, level, x, y) {
+  const box = bbox(kind, level, x, y);
   if (kind === 'peaks') {
-    return `[out:json][timeout:60];\n(\n  node["natural"="peak"](${box});\n  node["natural"="volcano"](${box});\n);\nout body;`;
+    return `[out:json][timeout:90];\n(\n  node["natural"="peak"](${box});\n  node["natural"="volcano"](${box});\n);\nout body;`;
   }
   // Bewusst ohne Filter auf "access": In den Alpen sind viele Forst- und
   // Almwege als privat getaggt – gegangen ist man sie trotzdem.
   return (
-    `[out:json][timeout:60];\n` +
+    `[out:json][timeout:90];\n` +
     `way["highway"~"^(${TRAIL_HIGHWAYS})$"]["footway"!~"^(sidewalk|crossing)$"](${box});\n` +
     `out body geom;`
   );
 }
 
-/** Fehler, bei denen es sich lohnt, später schonend nochmal zu versuchen. */
+/** Server ist überlastet – später nochmal, aber unverändert. */
 class BusyError extends Error {}
+
+/**
+ * Die Abfrage war für den Server zu groß (Zeit- oder Speichergrenze). Overpass
+ * liefert dabei HTTP 200, ein "remark" und die bis dahin gefundenen Daten.
+ * Antwort: Kachel vierteln und die Teile einzeln holen.
+ */
+class TooBigError extends Error {}
 
 export class OverpassLoader {
   /**
@@ -84,13 +99,29 @@ export class OverpassLoader {
   request(kind, tiles) {
     const now = Date.now();
     for (const { x, y } of tiles) {
-      const key = tileKey(kind, x, y);
+      const key = tileKey(kind, 0, x, y);
       if (this.knows(key)) continue;
       const failure = this.failed.get(key);
       if (failure && (failure.tries >= MAX_TRIES || failure.retryAt > now)) continue;
-      this.queue.push({ kind, x, y, key });
+      this.queue.push({ kind, level: 0, x, y, key });
     }
     this.#pump();
+  }
+
+  /** Zu große Kachel in vier kleinere zerlegen. */
+  #split(job) {
+    // Die Elternkachel gilt als erledigt, ihre Fläche decken jetzt die Kinder ab.
+    this.done.add(job.key);
+    this.failed.delete(job.key);
+    for (const dx of [0, 1]) {
+      for (const dy of [0, 1]) {
+        const level = job.level + 1;
+        const x = job.x * 2 + dx;
+        const y = job.y * 2 + dy;
+        const key = tileKey(job.kind, level, x, y);
+        if (!this.knows(key)) this.queue.push({ kind: job.kind, level, x, y, key });
+      }
+    }
   }
 
   /** Noch nicht gestartete Kacheln außerhalb der Ansicht verwerfen. */
@@ -112,9 +143,20 @@ export class OverpassLoader {
     this.#report();
   }
 
-  /** Kacheln vergessen, damit sie neu geladen werden. */
-  forget(keys) {
-    for (const key of keys) {
+  /**
+   * Kacheln vergessen, damit sie neu geladen werden – samt der kleineren
+   * Kacheln, in die sie zwischenzeitlich zerlegt wurden.
+   * @returns {string[]} die vergessenen Schlüssel (für den Zwischenspeicher)
+   */
+  forget(tiles) {
+    const parents = new Set(tiles.map(({ kind, x, y }) => `${kind}/${x}/${y}`));
+    const removed = [];
+    for (const key of [...this.done, ...this.failed.keys(), ...this.timers.keys()]) {
+      const [kind, level, x, y] = key.split('/');
+      const factor = 2 ** Number(level);
+      const parent = `${kind}/${Math.floor(Number(x) / factor)}/${Math.floor(Number(y) / factor)}`;
+      if (!parents.has(parent)) continue;
+      removed.push(key);
       this.done.delete(key);
       this.failed.delete(key);
       const timer = this.timers.get(key);
@@ -123,6 +165,18 @@ export class OverpassLoader {
         this.timers.delete(key);
       }
     }
+    return removed;
+  }
+
+  /** Was gerade nicht geladen werden konnte – für die Anzeige. */
+  get failures() {
+    return [...this.failed.entries()].map(([key, failure]) => ({
+      key,
+      message: failure.message,
+      endpoint: failure.endpoint,
+      tries: failure.tries,
+      aufgegeben: failure.tries >= MAX_TRIES,
+    }));
   }
 
   #report(extra = {}) {
@@ -153,9 +207,16 @@ export class OverpassLoader {
   }
 
   #handleFailure(job, err) {
+    if (err instanceof TooBigError && job.level < MAX_LEVEL) {
+      console.warn(`Kachel ${job.key} war zu groß – wird geviertelt: ${err.message}`);
+      this.#split(job);
+      this.#pump();
+      return;
+    }
     const failure = this.failed.get(job.key) || { tries: 0, retryAt: 0 };
     failure.tries++;
     failure.message = err.message || String(err);
+    failure.endpoint = new URL(OVERPASS_ENDPOINTS[this.endpoint]).hostname;
     const base = RETRY_DELAYS[Math.min(failure.tries - 1, RETRY_DELAYS.length - 1)];
     const delay = err instanceof BusyError ? Math.max(base, BUSY_DELAY) : base;
     failure.retryAt = Date.now() + delay;
@@ -187,11 +248,13 @@ export class OverpassLoader {
     }
     const url = OVERPASS_ENDPOINTS[this.endpoint];
     const controller = new AbortController();
+    // Der Server, der gerade dran ist – für die Fehleranzeige.
+    this.lastUrl = url;
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
     try {
       const res = await fetch(url, {
         method: 'POST',
-        body: new URLSearchParams({ data: query(job.kind, job.x, job.y) }),
+        body: new URLSearchParams({ data: query(job.kind, job.level, job.x, job.y) }),
         signal: controller.signal,
       });
       if (res.status === 429 || res.status === 504) {
@@ -200,13 +263,16 @@ export class OverpassLoader {
       if (!res.ok) throw new Error(`Overpass antwortete mit ${res.status}`);
 
       const json = await res.json();
-      // Overpass meldet Zeitüberschreitungen und Speichergrenzen mit HTTP 200
-      // und einem "remark" – das darf nie als geladen gelten oder gar im
-      // Zwischenspeicher landen, sonst bleibt die Gegend dauerhaft leer.
-      if (json.remark && /error|timed? out|exceeded|memory/i.test(json.remark)) {
-        throw new BusyError(`Overpass: ${json.remark}`);
-      }
       if (!Array.isArray(json.elements)) throw new Error('Unerwartete Antwort von Overpass');
+
+      // Overpass meldet Zeit- und Speichergrenzen mit HTTP 200, einem "remark"
+      // und den bis dahin gefundenen Daten. Die Teildaten sind brauchbar und
+      // werden angezeigt – die Kachel gilt aber nicht als geladen, landet nicht
+      // im Zwischenspeicher und wird kleiner erneut geholt.
+      if (json.remark && /error|timed? out|exceeded|memory/i.test(json.remark)) {
+        if (json.elements.length) this.onData(job.kind, json.elements);
+        throw new TooBigError(`Overpass: ${json.remark.replace(/^runtime error:\s*/i, '')}`);
+      }
 
       this.done.add(job.key);
       await cachePut(job.key, json.elements);

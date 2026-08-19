@@ -242,7 +242,15 @@ kbd {
 .li-side { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
 .li-sub { color: var(--muted); font-size: 12px; }
 
+.warn-card { border-left: 4px solid #b45309; }
+/* .list li setzt display:flex und ist spezifischer als .issue allein */
+.list li.issue { display: block; }
+.list li.issue .li-main { display: block; white-space: normal; overflow: visible; font-weight: 600; }
+.list li.issue .li-sub { display: block; word-break: break-word; white-space: normal; margin-top: 1px; }
+
 /* — Statusanzeige und Meldungen ————————————————————— */
+
+.status { display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; }
 
 .status, .toast {
   position: absolute;

@@ -66,45 +66,62 @@ await withPage(async (page) => {
   await page.waitForFunction(() => window.alpenkarte?.view?.loader?.failedCount > 0, null, { timeout: 20000 });
   const warnung = await page.textContent('#status');
   assert.match(warnung, /nicht geladen/);
+  const details = await page.textContent('#issue-list');
+  assert.match(details, /Overpass antwortete mit 500/, 'der Grund steht in der Seitenleiste');
   await page.waitForFunction(() => window.alpenkarte.view.graph.size > 0, null, { timeout: 20000 });
   assert.ok(attempts >= 2, 'es wurde erneut versucht');
   console.log(`✓ Nach einem Fehler wird von selbst erneut geladen (Hinweis: „${warnung.trim()}")`);
+  console.log('✓ Der Grund steht sichtbar in der Seitenleiste, nicht nur in der Konsole');
 });
 
-// 3) Overpass-Zeitüberschreitung (HTTP 200 mit "remark") gilt nicht als geladen
+// 3) Zeitüberschreitung: Teildaten behalten und die Kachel vierteln
 await withPage(async (page) => {
-  // Solange 'gestoert' gesetzt ist, antwortet der Server auf *jede* Wegeabfrage
-  // mit einer Zeitüberschreitung – sonst hinge das Ergebnis davon ab, welche
-  // Kachel zuerst drankommt.
-  let gestoert = true;
+  const bboxSpan = (data) => {
+    const zahlen = (bboxOf(data).match(/-?[\d.]+/g) || []).map(Number);
+    return zahlen.length === 4 ? +(zahlen[2] - zahlen[0]).toFixed(4) : 0;
+  };
+  const spans = [];
   await page.route('**/api/interpreter', (route) => {
     const data = route.request().postData() || '';
     if (!data.includes('highway')) return route.fulfill(json({ elements: [] }));
-    if (gestoert) {
-      return route.fulfill(json({ elements: [], remark: 'runtime error: Query timed out in "query" at line 2 after 60 seconds.' }));
+    const span = bboxSpan(data);
+    spans.push(span);
+    // Die volle Kachel läuft in die Zeitüberschreitung und liefert nur einen
+    // Teil; die geviertelten Kacheln antworten vollständig.
+    if (span > 0.03) {
+      return route.fulfill(json({
+        elements: [wayFor(3, LAT)],
+        remark: 'runtime error: Query timed out in "query" at line 2 after 90 seconds.',
+      }));
     }
-    return route.fulfill(json({ elements: [wayFor(3, LAT)] }));
+    return route.fulfill(json({ elements: [wayFor(4, LAT + 0.001), wayFor(5, LAT + 0.002)] }));
   });
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => window.alpenkarte?.view?.loader?.failedCount > 0, null, { timeout: 20000 });
-  const state = await page.evaluate(() => ({
-    alsGeladenVerbucht: [...window.alpenkarte.view.loader.done].some((k) => k.startsWith('trails/')),
-    fehler: [...window.alpenkarte.view.loader.failed.values()][0]?.message,
+  await page.waitForFunction(() => window.alpenkarte?.view?.graph?.size >= 3, null, { timeout: 30000 });
+
+  const teildaten = await page.evaluate(() => window.alpenkarte.view.graph.ways.has(3));
+  assert.equal(teildaten, true, 'die Teildaten der abgebrochenen Abfrage werden angezeigt');
+  console.log('✓ Teildaten einer abgebrochenen Abfrage gehen nicht verloren');
+
+  const klein = () => spans.filter((s) => s > 0 && s < 0.03);
+  for (let i = 0; i < 60 && klein().length < 4; i++) await page.waitForTimeout(200);
+  const geviertelt = klein();
+  assert.ok(geviertelt.length >= 4, `Kachel wurde geviertelt (kleinere Abfragen: ${geviertelt.length})`);
+  assert.ok(Math.abs(geviertelt[0] - 0.0204) < 0.002, `halbe Kantenlaenge, war ${geviertelt[0]}`);
+  console.log(`✓ Zu große Kachel wird selbsttätig geviertelt (${geviertelt.length} kleinere Abfragen)`);
+
+  const zustand = await page.evaluate(() => ({
+    offen: window.alpenkarte.view.loader.failedCount,
+    kleineGeladen: [...window.alpenkarte.view.loader.done].filter((k) => k.startsWith('trails/1/')).length,
   }));
-  assert.equal(state.alsGeladenVerbucht, false, 'Zeitüberschreitung gilt nicht als geladen');
-  assert.match(state.fehler, /timed out/);
-  console.log('✓ Zeitüberschreitung wird als Fehler erkannt, nicht als leere Gegend');
+  assert.equal(zustand.offen, 0, 'nach dem Vierteln bleibt nichts offen');
+  assert.ok(zustand.kleineGeladen >= 4, 'die kleineren Kacheln sind geladen');
+  console.log('✓ Danach ist der Bereich vollständig geladen, ohne offene Meldung');
 
-  // Über den Knopf in der Statusleiste sofort erneut versuchen
-  gestoert = false;
-  await page.click('.status-btn');
-  await page.waitForFunction(() => window.alpenkarte.view.graph.size > 0, null, { timeout: 20000 });
-  console.log('✓ Der Knopf „Jetzt nochmal" lädt die fehlenden Bereiche nach');
-
-  // Nichts Kaputtes im Zwischenspeicher: nach dem Neuladen sind die Wege da
+  // Die abgebrochene Antwort darf nicht im Zwischenspeicher liegen
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => window.alpenkarte?.view?.graph?.size > 0, null, { timeout: 20000 });
-  console.log('✓ Die gestörte Antwort ist nicht im Zwischenspeicher gelandet');
+  await page.waitForFunction(() => window.alpenkarte?.view?.graph?.size >= 2, null, { timeout: 30000 });
+  console.log('✓ Nach dem Neuladen sind die Wege wieder da');
 });
 
 // 4) „Diesen Ausschnitt neu laden" holt trotz Zwischenspeicher frisch

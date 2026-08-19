@@ -146,26 +146,30 @@ export class MapView {
 
   // — Daten nachladen ————————————————————————————————
 
-  /** Welche Kacheln decken die aktuelle Ansicht ab? */
+  /**
+   * Welche Kacheln decken die aktuelle Ansicht ab? Sortiert nach Abstand zur
+   * Bildschirmmitte, damit dort zuerst etwas erscheint, und auf eine
+   * vernünftige Anzahl begrenzt.
+   */
   #tilesForView() {
     const zoom = this.map.getZoom();
     const bounds = this.map.getBounds().pad(0.1);
+    const center = this.map.getCenter();
     const result = { keys: new Set(), peaks: [], trails: [] };
 
-    if (zoom >= PEAK_ZOOM_MIN) {
-      const tiles = tilesForBounds(bounds, PEAK_TILE);
-      if (tiles.length <= MAX_TILES_PER_VIEW) {
-        result.peaks = tiles;
-        tiles.forEach((t) => result.keys.add(tileKey('peaks', t.x, t.y)));
-      }
-    }
-    if (zoom >= TRAIL_ZOOM_MIN) {
-      const tiles = tilesForBounds(bounds, TRAIL_TILE);
-      if (tiles.length <= MAX_TILES_PER_VIEW) {
-        result.trails = tiles;
-        tiles.forEach((t) => result.keys.add(tileKey('trails', t.x, t.y)));
-      }
-    }
+    const collect = (kind, size) => {
+      const cx = center.lng / size;
+      const cy = center.lat / size;
+      const tiles = tilesForBounds(bounds, size)
+        .map((t) => ({ ...t, kind, weite: Math.hypot(t.x + 0.5 - cx, t.y + 0.5 - cy) }))
+        .sort((a, b) => a.weite - b.weite)
+        .slice(0, MAX_TILES_PER_VIEW);
+      tiles.forEach((t) => result.keys.add(tileKey(kind, 0, t.x, t.y)));
+      return tiles;
+    };
+
+    if (zoom >= PEAK_ZOOM_MIN) result.peaks = collect('peaks', PEAK_TILE);
+    if (zoom >= TRAIL_ZOOM_MIN) result.trails = collect('trails', TRAIL_TILE);
     return result;
   }
 
@@ -231,7 +235,7 @@ export class MapView {
       zoom,
       pending: state?.pending,
       failed: this.loader?.failedCount || 0,
-      lastError: state?.error,
+      failures: this.loader?.failures || [],
       needZoom: zoom < TRAIL_ZOOM_MIN,
       ways: this.graph.size,
       autoLoad: this.autoLoad,
@@ -250,12 +254,11 @@ export class MapView {
    */
   async reloadArea() {
     const view = this.#tilesForView();
-    const keys = [...view.keys];
-    this.loader.forget(keys);
-    await cacheDelete(keys);
+    const removed = this.loader.forget([...view.peaks, ...view.trails]);
+    await cacheDelete(removed);
     if (view.peaks.length) this.loader.request('peaks', view.peaks);
     if (view.trails.length) this.loader.request('trails', view.trails);
-    return keys.length;
+    return view.trails.length + view.peaks.length;
   }
 
   // — Wege zeichnen ——————————————————————————————————

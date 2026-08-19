@@ -115,17 +115,23 @@ danebentippen darf, dass der nähere von zwei Wegen gewinnt und dass bei zu klei
 
 ## Wenn in einer Gegend Wege fehlen
 
-Die Wege werden in Blöcken von 0,08° geladen (rund 9 × 6 km). Fehlt einmal ein ganzer Landstrich und nicht nur
-einzelne Wege, ist die Abfrage für genau diesen Block schiefgegangen. Dagegen laufen mehrere Vorkehrungen:
+Die Wege werden blockweise geladen (0,04°, rund 4,5 × 3 km). Die Blockgröße ist der wunde Punkt: Ist ein Block
+zu groß, schafft Overpass die Abfrage nicht im Zeitbudget – und liefert dann **HTTP 200 mit einem `remark` und
+nur den bis dahin gefundenen Wegen**. Genau so entsteht das Bild „hier sind kaum Wege drin“.
 
-- Fehlgeschlagene Blöcke werden **automatisch erneut versucht**, mit wachsender Wartezeit (2 s bis 60 s) und beim
-  nächsten Versuch über einen anderen Overpass-Server.
-- Solange etwas fehlt, steht das **oben in der Statusleiste** samt Knopf *Jetzt nochmal* – eine stille Lücke
-  soll es nicht geben.
-- Overpass meldet eine Zeitüberschreitung mit HTTP 200 und einem `remark`-Feld statt mit einem Fehlercode. Das
-  wird als Störung erkannt und **nicht** im Zwischenspeicher abgelegt (sonst bliebe die Gegend 14 Tage leer).
-- Hilft alles nichts: *Karte → Diesen Ausschnitt neu laden* holt den sichtbaren Bereich am Zwischenspeicher
-  vorbei frisch vom Server.
+Dagegen laufen mehrere Vorkehrungen:
+
+- **Teildaten werden angezeigt**, nicht weggeworfen. Der Block gilt aber nicht als geladen.
+- Ein abgebrochener Block wird **selbsttätig geviertelt** und in kleineren Stücken neu geholt, bis zu drei Mal
+  (bis rund 550 m Kantenlänge).
+- Abgelehnte Abfragen (429/504, Netzfehler) werden mit wachsender Wartezeit (2 s bis 60 s) erneut versucht,
+  jeweils über einen anderen Overpass-Server.
+- Nichts davon landet im Zwischenspeicher – sonst bliebe die Gegend 14 Tage leer.
+- Bleibt etwas offen, steht das **oben in der Statusleiste** und mit Grund, Server und Position in der
+  Seitenleiste unter *Nicht geladene Bereiche*. Ein Klick auf den Eintrag springt dorthin.
+- *Karte → Diesen Ausschnitt neu laden* holt den sichtbaren Bereich am Zwischenspeicher vorbei frisch vom Server.
+
+Kacheln werden **von der Bildschirmmitte nach außen** angefordert, damit dort zuerst etwas erscheint.
 
 ## Grenzen und Stolpersteine
 
